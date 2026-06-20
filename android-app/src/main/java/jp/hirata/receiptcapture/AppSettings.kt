@@ -18,5 +18,7 @@ class AppSettings(context: Context) {
         get() = prefs.getString("folder_name", "receipt-inbox") ?: "receipt-inbox"
         set(value) { prefs.edit().putString("folder_name", value).apply() }
 
-    val configured get() = payer.isNotBlank() && accountName.isNotBlank() && folderId.isNotBlank()
+    // Picker can return a valid folder grant without including an account email.
+    // The email is retained when available, but payer + folder grant are sufficient.
+    val configured get() = payer.isNotBlank() && folderId.isNotBlank()
 }

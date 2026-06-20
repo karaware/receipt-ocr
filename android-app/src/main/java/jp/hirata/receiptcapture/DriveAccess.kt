@@ -10,10 +10,14 @@ import com.google.android.gms.tasks.Tasks
 object DriveAccess {
     const val DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 
-    fun basicRequest(accountName: String): AuthorizationRequest = AuthorizationRequest.builder()
-        .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
-        .setAccount(Account(accountName, "com.google"))
-        .build()
+    fun basicRequest(accountName: String): AuthorizationRequest {
+        val builder = AuthorizationRequest.builder()
+            .setRequestedScopes(listOf(Scope(DRIVE_FILE_SCOPE)))
+        if (accountName.isNotBlank()) {
+            builder.setAccount(Account(accountName, "com.google"))
+        }
+        return builder.build()
+    }
 
     fun silentToken(context: Context, accountName: String): String? {
         val result = Tasks.await(Identity.getAuthorizationClient(context).authorize(basicRequest(accountName)))

@@ -2,6 +2,8 @@ package jp.hirata.receiptcapture
 
 import android.Manifest
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
@@ -15,6 +17,7 @@ import com.google.android.gms.common.api.Scope
 class MainActivity : ComponentActivity() {
     private val settings get() = ReceiptApplication.from(this).settings
     private var payerBeingConfigured = ""
+    private var accountBeingConfigured = ""
     private var configurationRevision by mutableIntStateOf(0)
     private val authorizationClient by lazy { Identity.getAuthorizationClient(this) }
 
@@ -24,6 +27,9 @@ class MainActivity : ComponentActivity() {
         if (activityResult.resultCode == RESULT_OK && activityResult.data != null) {
             runCatching { authorizationClient.getAuthorizationResultFromIntent(activityResult.data!!) }
                 .onSuccess(::finishPickerConfiguration)
+                .onFailure { showConfigurationError("Google Driveの選択結果を読み取れませんでした", it) }
+        } else {
+            showConfigurationError("Google Driveフォルダの選択がキャンセルされました")
         }
     }
 
@@ -48,6 +54,9 @@ class MainActivity : ComponentActivity() {
     private fun openFolderPicker(payer: String) {
         payerBeingConfigured = payer.trim()
         if (payerBeingConfigured.isBlank()) return
+        // Persist before opening Google Play services because the activity can be recreated
+        // while the external Picker is in the foreground.
+        settings.payer = payerBeingConfigured
         val request = AuthorizationRequest.builder()
             .setRequestedScopes(listOf(Scope(DriveAccess.DRIVE_FILE_SCOPE)))
             .setOptOutIncludingGrantedScopes(true)
@@ -57,22 +66,41 @@ class MainActivity : ComponentActivity() {
             .build()
         authorizationClient.authorize(request)
             .addOnSuccessListener { result ->
+                accountBeingConfigured = result.toGoogleSignInAccount()?.email.orEmpty()
                 if (result.hasResolution()) {
                     authorizationLauncher.launch(IntentSenderRequest.Builder(result.pendingIntent!!.intentSender).build())
                 } else finishPickerConfiguration(result)
             }
+            .addOnFailureListener { showConfigurationError("Google認証を開始できませんでした", it) }
     }
 
     private fun finishPickerConfiguration(result: AuthorizationResult) {
-        val folderIds = result.tokenResponseParams?.getString("picked_file_ids").orEmpty()
+        val params = result.tokenResponseParams
+        val folderIds = params?.get("picked_file_ids")?.toString().orEmpty()
         val folderId = folderIds.substringBefore(',').trim()
         val account = result.toGoogleSignInAccount()?.email.orEmpty()
-        if (folderId.isBlank() || account.isBlank()) return
+            .ifBlank { accountBeingConfigured }
+            .ifBlank { settings.accountName }
+        Log.i(TAG, "Picker returned folder=${folderId.isNotBlank()}, account=${account.isNotBlank()}, keys=${params?.keySet()}")
+        if (folderId.isBlank()) {
+            showConfigurationError("フォルダIDを取得できませんでした。receipt-inboxを選択して「挿入」を押してください")
+            return
+        }
         settings.payer = payerBeingConfigured.ifBlank { settings.payer }
-        settings.accountName = account
+        if (account.isNotBlank()) settings.accountName = account
         settings.folderId = folderId
         settings.folderName = "receipt-inbox"
         configurationRevision++
+        Toast.makeText(this, "receipt-inboxを設定しました", Toast.LENGTH_SHORT).show()
         UploadWorker.enqueue(this, replace = true)
+    }
+
+    private fun showConfigurationError(message: String, error: Throwable? = null) {
+        Log.e(TAG, message, error)
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    companion object {
+        private const val TAG = "ReceiptCaptureSetup"
     }
 }
