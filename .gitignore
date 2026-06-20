@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.swift-module-cache*/
+
+data/
+logs/
+secrets/
+*.jks
+*.keystore
+local.properties
+.gradle/
+**/build/
+config/config.json
