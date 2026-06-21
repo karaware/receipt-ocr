@@ -7,7 +7,9 @@ name = "receipt-ocr"
 version = "0.1.0"
 description = "Home receipt OCR pipeline"
 requires-python = ">=3.9"
+dependencies = [
+    "firebase-admin>=6.5,<8",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

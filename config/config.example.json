@@ -16,6 +16,12 @@
     "after_import": "archive",
     "archive_dir": "~/Google Drive/receipt-processed"
   },
+  "cloud": {
+    "enabled": false,
+    "household_id": "hirata-household",
+    "household_name": "家計簿",
+    "service_account_path": "secrets/firebase-service-account.json"
+  },
   "parser": {
     "tax_included_keywords": ["税込", "合計", "お買上計", "総合計", "合 計"],
     "ignore_line_keywords": ["領収書", "レシート", "TEL", "電話", "担当", "レジ", "釣銭", "お預り", "預り"]

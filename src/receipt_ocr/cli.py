@@ -36,6 +36,11 @@ def main() -> int:
     review_parser.add_argument("--host", default="127.0.0.1")
     review_parser.add_argument("--port", type=int, default=8765)
 
+    subparsers.add_parser("sync-cloud", help="Sync pending local receipts to Firestore")
+    migrate_parser = subparsers.add_parser("migrate-cloud", help="Upload existing receipts as review-required")
+    bootstrap_parser = subparsers.add_parser("bootstrap-cloud", help="Create household, allowlist, and default categories")
+    bootstrap_parser.add_argument("--email", action="append", required=True, help="Allowed Google account (repeatable)")
+
     args = parser.parse_args()
     config = load_config(args.config)
     ensure_dirs(config)
@@ -55,6 +60,18 @@ def main() -> int:
 
     if args.command == "review":
         run_review_server(args.config, host=args.host, port=args.port)
+        return 0
+
+    if args.command in {"sync-cloud", "migrate-cloud"}:
+        from .cloud import sync_cloud
+        result = sync_cloud(config, include_existing_as_review=args.command == "migrate-cloud")
+        print(f"synced={result['synced']} failed={result['failed']}")
+        return 1 if result["failed"] else 0
+
+    if args.command == "bootstrap-cloud":
+        from .cloud import bootstrap_cloud
+        bootstrap_cloud(config, args.email)
+        print("bootstrap=complete")
         return 0
 
     parser.error(f"unknown command: {args.command}")

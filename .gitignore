@@ -12,4 +12,14 @@ secrets/
 local.properties
 .gradle/
 **/build/
+**/node_modules/
+web-app/dist/
+web-app/*.tsbuildinfo
+web-app/vite.config.js
+web-app/vite.config.d.ts
+web-app/.env
+web-app/.env.local
+.firebase/
+*.egg-info/
+*.code-workspace
 config/config.json

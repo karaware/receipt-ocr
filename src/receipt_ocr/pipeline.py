@@ -24,6 +24,13 @@ def run_local(
     failed = Path(paths["failed_dir"])
     conn = connect(paths["db_path"])
     init_db(conn)
+    cloud_rules = {}
+    if config.get("cloud", {}).get("enabled"):
+        try:
+            from .cloud import fetch_category_rules
+            cloud_rules = dict(fetch_category_rules(config))
+        except Exception as error:
+            print(f"cloud_rules_warning={error}")
 
     count = 0
     for image_path in _iter_images(inbox):
@@ -33,7 +40,7 @@ def run_local(
         try:
             ocr_text = run_ocr(image_path, config)
             parsed = parse_receipt(ocr_text, config)
-            parsed.items = categorize_items(parsed.items, config)
+            parsed.items = categorize_items(parsed.items, config, cloud_rules)
             image_payer = resolve_payer(image_path, payer)
             insert_receipt(conn, source_path, image_payer, parsed, ocr_text)
             _move_unique(image_path, processed / image_path.name)

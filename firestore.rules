@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function householdMember(householdId) {
+      return signedIn() && exists(
+        /databases/$(database)/documents/households/$(householdId)/allowed_emails/$(request.auth.token.email.lower())
+      );
+    }
+
+    match /households/{householdId} {
+      allow read: if householdMember(householdId);
+      allow write: if false;
+
+      match /allowed_emails/{emailHash} {
+        allow read, write: if false;
+      }
+
+      match /{collection}/{document=**} {
+        allow read, write: if householdMember(householdId)
+          && collection != 'allowed_emails';
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

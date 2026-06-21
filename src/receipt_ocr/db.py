@@ -37,6 +37,17 @@ def init_db(conn: sqlite3.Connection) -> None:
             confidence REAL NOT NULL,
             FOREIGN KEY(receipt_id) REFERENCES receipts(id)
         );
+
+        CREATE TABLE IF NOT EXISTS cloud_sync (
+            receipt_id INTEGER PRIMARY KEY,
+            cloud_receipt_id TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(receipt_id) REFERENCES receipts(id)
+        );
         """
     )
     conn.commit()
@@ -85,4 +96,3 @@ def insert_receipt(
     )
     conn.commit()
     return receipt_id
-
