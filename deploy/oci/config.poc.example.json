@@ -1,0 +1,43 @@
+{
+  "paths": {
+    "inbox_dir": "/var/lib/receipt-ocr-poc/work/local/inbox",
+    "processed_dir": "/var/lib/receipt-ocr-poc/work/local/processed",
+    "failed_dir": "/var/lib/receipt-ocr-poc/work/local/failed",
+    "export_dir": "/var/lib/receipt-ocr-poc/work/local/export",
+    "db_path": "/var/lib/receipt-ocr-poc/work/local/receipts.sqlite3"
+  },
+  "ocr": {
+    "backend": "macos_vision",
+    "timeout_seconds": 60
+  },
+  "drive": {
+    "enabled": false,
+    "source_dir": "",
+    "after_import": "keep",
+    "archive_dir": ""
+  },
+  "cloud": {
+    "enabled": false,
+    "household_id": "hirata-household",
+    "household_name": "家計簿",
+    "service_account_path": "/etc/receipt-ocr-poc/secrets/firestore.json"
+  },
+  "poc": {
+    "drive_folder_id": "replace-with-poc-folder-id",
+    "household_id": "hirata-household",
+    "drive_service_account_path": "/etc/receipt-ocr-poc/secrets/drive.json",
+    "vision_service_account_path": "/etc/receipt-ocr-poc/secrets/vision.json",
+    "firestore_service_account_path": "/etc/receipt-ocr-poc/secrets/firestore.json",
+    "work_dir": "/var/lib/receipt-ocr-poc/work",
+    "max_vision_units": 20
+  },
+  "parser": {
+    "tax_included_keywords": ["税込", "合計", "お買上計", "総合計", "合 計"],
+    "ignore_line_keywords": ["領収書", "レシート", "TEL", "電話", "担当", "レジ", "釣銭", "お預り", "預り"]
+  },
+  "categories": {
+    "食費": ["牛乳", "卵", "玉子", "パン", "米", "肉", "豚", "牛", "鶏", "魚", "野菜", "豆腐", "納豆", "ヨーグルト", "弁当", "惣菜", "飲料", "ジュース", "茶"],
+    "日用品": ["洗剤", "柔軟剤", "ティッシュ", "トイレット", "ラップ", "アルミ", "スポンジ", "シャンプー", "石鹸", "せっけん", "歯磨", "歯ブラシ"],
+    "消耗品": ["電池", "ゴミ袋", "フィルター", "電球", "インク", "コピー用紙"]
+  }
+}

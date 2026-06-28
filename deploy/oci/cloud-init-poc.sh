@@ -88,8 +88,8 @@ done
 
 chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}"
 sudo -u "${APP_USER}" python3 -m venv "${APP_DIR}/.venv"
-sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/python" -m pip install -e "${APP_DIR}"
+sudo -u "${APP_USER}" env PIP_NO_CACHE_DIR=1 "${APP_DIR}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+sudo -u "${APP_USER}" env PIP_NO_CACHE_DIR=1 "${APP_DIR}/.venv/bin/python" -m pip install -e "${APP_DIR}"
 
 install -o root -g "${APP_GROUP}" -m 0640 \
   "${APP_DIR}/deploy/oci/config.example.env" \

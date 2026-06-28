@@ -99,14 +99,14 @@ timedatectl show --property=Timezone --value
 | OS | Oracle Linux 9 |
 | CPU | `1` |
 | メモリ | 約6GB |
-| ルートディスク | 約46GB使用可能な50GB相当のブートボリューム |
+| ディスク | `sda`が約46.6GB、`/`が約30GB、`/var/oled`が約15GB |
 | タイムゾーン | `Asia/Tokyo` |
 
 ## 5. デプロイ済みコード
 
 ```bash
-git -C /opt/receipt-ocr status --short --branch
-git -C /opt/receipt-ocr log -1 --oneline
+sudo -u receipt-ocr git -C /opt/receipt-ocr status --short --branch
+sudo -u receipt-ocr git -C /opt/receipt-ocr log -1 --oneline
 ```
 
 期待値:
@@ -114,6 +114,31 @@ git -C /opt/receipt-ocr log -1 --oneline
 - ブランチが `main`
 - 作業ツリーがclean
 - コミットがOCI PoC実装を含む `9cf23cd` 以降
+
+`?? .cache/` だけが表示される場合は、初回pip実行時にできたキャッシュである。アプリデータではないため、
+VMの動作には影響しない。`.cache/`を除外する最新の`.gitignore`へ更新すると表示されなくなる。
+
+### ブートボリューム割当ての確認
+
+通常版Oracle Linux 9のデフォルト50GB相当のブートボリュームは、約46.6GiBのディスクとして認識され、
+ルート用LVM約29.5GBと`/var/oled`用LVM約15GBに分割される。この場合、`df -h /`が約30GBでも未割当てではない。
+
+```bash
+lsblk
+df -h /
+```
+
+次の合計が一致していれば、ディスク全体が割当て済みである。
+
+```text
+sda3 約44.5GB
+  = ocivolume-root 約29.5GB
+  + ocivolume-oled 約15GB
+```
+
+この状態で`sudo /usr/libexec/oci-growfs -y`を実行すると、`NOCHANGE`と`Unable to expand`が表示される。
+これは異常ではなく、拡張できる未割当て領域がないことを示す。今後OCI Consoleでブートボリューム自体を
+50GBより大きく変更した場合にだけ、`oci-growfs`でルート領域を拡張する。
 
 ## 6. Python環境
 
@@ -175,8 +200,8 @@ sudo cat /var/lib/receipt-ocr-poc/NEXT_STEPS.txt
 
 ## 次の作業
 
-VM基盤の合格後、[OCI Cloud Vision PoCワーカーのセットアップ](OCI_POC_SETUP.md)の
-「秘密情報と実設定の配置」へ進む。設定後もすぐtimerを有効化せず、次の順で確認する。
+VM基盤の合格後、[OCI PoCワーカーの認証設定と稼働開始](OCI_POC_WORKER_ACTIVATION.md)へ進む。
+設定後もすぐtimerを有効化せず、次の順で確認する。
 
 1. `cloud-worker --poc --dry-run`
 2. `cloud-worker --poc --once`

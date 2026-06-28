@@ -20,6 +20,7 @@ web-app/vite.config.d.ts
 web-app/.env
 web-app/.env.local
 .firebase/
+.cache/
 *.egg-info/
 *.code-workspace
 config/config.json
