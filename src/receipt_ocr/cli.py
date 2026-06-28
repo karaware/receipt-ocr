@@ -41,6 +41,13 @@ def main() -> int:
     bootstrap_parser = subparsers.add_parser("bootstrap-cloud", help="Create household, allowlist, and default categories")
     bootstrap_parser.add_argument("--email", action="append", required=True, help="Allowed Google account (repeatable)")
 
+    worker_parser = subparsers.add_parser("cloud-worker", help="Run the OCI Cloud Vision PoC worker")
+    worker_parser.add_argument("worker_action", nargs="?", choices=("status", "retry"))
+    worker_parser.add_argument("drive_file_id", nargs="?")
+    worker_parser.add_argument("--poc", action="store_true", required=True)
+    worker_parser.add_argument("--once", action="store_true")
+    worker_parser.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
     config = load_config(args.config)
     ensure_dirs(config)
@@ -73,6 +80,26 @@ def main() -> int:
         bootstrap_cloud(config, args.email)
         print("bootstrap=complete")
         return 0
+
+    if args.command == "cloud-worker":
+        import json
+        from .cloud_worker import create_worker
+
+        worker = create_worker(config)
+        if args.worker_action == "status":
+            print(json.dumps(worker._writer.list_jobs(), ensure_ascii=False, default=str))
+            return 0
+        if args.worker_action == "retry":
+            if not args.drive_file_id:
+                parser.error("cloud-worker retry requires a Drive file ID")
+            retried = worker._writer.retry_unknown(args.drive_file_id)
+            print(f"retry_ready={str(retried).lower()} drive_file_id={args.drive_file_id}")
+            return 0 if retried else 1
+        if not args.once and not args.dry_run:
+            parser.error("cloud-worker requires --once or --dry-run")
+        result = worker.run_once(dry_run=args.dry_run)
+        print(json.dumps(result, ensure_ascii=False))
+        return 1 if result["status"] in {"failed", "unknown_after_request", "invalid_source"} else 0
 
     parser.error(f"unknown command: {args.command}")
     return 2

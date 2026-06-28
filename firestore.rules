@@ -21,7 +21,25 @@ service cloud.firestore {
 
       match /{collection}/{document=**} {
         allow read, write: if householdMember(householdId)
-          && collection != 'allowed_emails';
+          && collection != 'allowed_emails'
+          && collection != 'poc_ocr_jobs'
+          && collection != 'poc_ocr_usage'
+          && collection != 'poc_receipts';
+      }
+
+      match /poc_ocr_jobs/{document=**} {
+        allow read: if householdMember(householdId);
+        allow write: if false;
+      }
+
+      match /poc_ocr_usage/{document=**} {
+        allow read: if householdMember(householdId);
+        allow write: if false;
+      }
+
+      match /poc_receipts/{document=**} {
+        allow read: if householdMember(householdId);
+        allow write: if false;
       }
     }
 

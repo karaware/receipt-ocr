@@ -9,6 +9,8 @@ description = "Home receipt OCR pipeline"
 requires-python = ">=3.9"
 dependencies = [
     "firebase-admin>=6.5,<8",
+    "google-api-python-client>=2.100,<3",
+    "google-cloud-vision>=3.7,<4",
 ]
 
 [tool.setuptools.packages.find]

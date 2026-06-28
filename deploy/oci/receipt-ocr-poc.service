@@ -1,0 +1,20 @@
+[Unit]
+Description=Receipt OCR Cloud Vision PoC worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=receipt-ocr
+Group=receipt-ocr
+WorkingDirectory=/opt/receipt-ocr
+EnvironmentFile=/etc/receipt-ocr-poc/config.env
+ExecStart=/opt/receipt-ocr/.venv/bin/python -m receipt_ocr --config /etc/receipt-ocr-poc/config.json cloud-worker --poc --once
+StateDirectory=receipt-ocr-poc
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/receipt-ocr-poc
+TimeoutStartSec=4min
+UMask=0077
