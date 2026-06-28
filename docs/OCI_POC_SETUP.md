@@ -262,6 +262,8 @@ cloud-initは初回起動時だけ実行される。完了にはOS更新とPytho
 
 ### 起動後の確認
 
+詳細な確認項目と期待値は[OCI VM作成後の動作確認](OCI_VM_VERIFICATION.md)を参照する。
+
 ```bash
 ssh opc@VM_PUBLIC_IP
 sudo cloud-init status --wait
