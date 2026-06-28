@@ -4,6 +4,8 @@
 
 作成日: 2026-06-28
 
+文書種別: 比較記録
+
 ## 目的
 
 家計簿入力のために、レシート画像から以下の情報を自動抽出したい。
@@ -168,7 +170,8 @@ receipt-ocr/
     parse_receipt.py
     run.sh
   docs/
-    2026-06-28_02_OCR_COMPARISON.md
+    records/
+      2026-06-28_02_OCR_COMPARISON.md
 ```
 
 ## CSV形式案
