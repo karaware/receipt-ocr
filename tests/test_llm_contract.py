@@ -1,6 +1,8 @@
 import copy
+import json
 import unittest
 from datetime import date
+from pathlib import Path
 
 from receipt_ocr.llm_contract import (
     LlmValidationError,
@@ -11,6 +13,26 @@ from receipt_ocr.llm_contract import (
 
 
 class LlmContractTest(unittest.TestCase):
+    def test_const_definitions_declare_a_type_for_codex_structured_output(self):
+        schema_path = (
+            Path(__file__).resolve().parents[1]
+            / "schema"
+            / "receipt-llm-result-v1.json"
+        )
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        def assert_const_has_type(node, path="$"):
+            if isinstance(node, dict):
+                if "const" in node:
+                    self.assertIn("type", node, f"{path} uses const without type")
+                for key, value in node.items():
+                    assert_const_has_type(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    assert_const_has_type(value, f"{path}[{index}]")
+
+        assert_const_has_type(schema)
+
     def setUp(self):
         self.request = build_input(
             "file-1",
