@@ -32,7 +32,18 @@ META_KEYWORDS = [
     "電話",
     "登録番号",
     "カード番号",
+    "承認番号",
+    "端末番号",
+    "加盟店名",
+    "ご利用日",
     "伝票No",
+    "伝票番号",
+    "取引区分",
+    "支払区分",
+    "AID",
+    "ATC",
+    "カードシーケンス番号",
+    "アプリケーションラベル",
     "レジ",
     "店：",
     "App Store",
@@ -66,13 +77,25 @@ NON_ITEM_NAME_KEYWORDS = [
     "合計",
 ]
 MAX_REASONABLE_AMOUNT = 1_000_000
+DEFAULT_TOTAL_KEYWORDS = [
+    "合計",
+    "税込",
+    "日計金額",
+    "合計金額",
+    "お支払金額",
+    "お支払い金額",
+    "支払金額",
+    "決済金額",
+]
 
 
 def parse_receipt(ocr_text: str, config: Dict[str, Any]) -> ParsedReceipt:
     lines = _clean_lines(ocr_text)
     parser_config = config.get("parser", {})
     ignore_keywords = parser_config.get("ignore_line_keywords", [])
-    total_keywords = parser_config.get("tax_included_keywords", [])
+    total_keywords = _merge_keywords(
+        DEFAULT_TOTAL_KEYWORDS, parser_config.get("tax_included_keywords", [])
+    )
 
     receipt = ParsedReceipt()
     receipt.shop_name = _guess_shop_name(lines, ignore_keywords)
@@ -80,6 +103,17 @@ def parse_receipt(ocr_text: str, config: Dict[str, Any]) -> ParsedReceipt:
     receipt.total_amount = _guess_total(lines, total_keywords)
     receipt.items = _guess_items(lines, ignore_keywords, total_keywords)
     return receipt
+
+
+def _merge_keywords(*groups: Iterable[str]) -> List[str]:
+    merged: List[str] = []
+    seen = set()
+    for group in groups:
+        for keyword in group:
+            if keyword and keyword not in seen:
+                merged.append(keyword)
+                seen.add(keyword)
+    return merged
 
 
 def _clean_lines(text: str) -> List[str]:
