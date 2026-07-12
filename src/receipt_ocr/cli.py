@@ -42,7 +42,7 @@ def main() -> int:
     bootstrap_parser.add_argument("--email", action="append", required=True, help="Allowed Google account (repeatable)")
 
     worker_parser = subparsers.add_parser("cloud-worker", help="Run the OCI Cloud Vision PoC worker")
-    worker_parser.add_argument("worker_action", nargs="?", choices=("status", "retry"))
+    worker_parser.add_argument("worker_action", nargs="?", choices=("status", "receipt", "retry"))
     worker_parser.add_argument("drive_file_id", nargs="?")
     worker_parser.add_argument("--poc", action="store_true", required=True)
     worker_parser.add_argument("--once", action="store_true")
@@ -89,6 +89,12 @@ def main() -> int:
         if args.worker_action == "status":
             print(json.dumps(worker._writer.list_jobs(), ensure_ascii=False, default=str))
             return 0
+        if args.worker_action == "receipt":
+            if not args.drive_file_id:
+                parser.error("cloud-worker receipt requires a Drive file ID")
+            receipt = worker._writer.get_receipt(args.drive_file_id)
+            print(json.dumps(receipt, ensure_ascii=False, default=str))
+            return 0 if receipt else 1
         if args.worker_action == "retry":
             if not args.drive_file_id:
                 parser.error("cloud-worker retry requires a Drive file ID")

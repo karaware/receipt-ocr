@@ -38,6 +38,10 @@ class FirestoreWriter:
         snapshot = self._jobs.document(file_id).get()
         return snapshot.to_dict() if snapshot.exists else None
 
+    def get_receipt(self, file_id: str) -> Mapping[str, Any] | None:
+        snapshot = self._receipts.document(file_id).get()
+        return snapshot.to_dict() if snapshot.exists else None
+
     def reserve(self, file_id: str, source_name: str, payer: str) -> Reservation:
         from firebase_admin import firestore
 
