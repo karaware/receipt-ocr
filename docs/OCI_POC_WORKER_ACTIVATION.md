@@ -847,6 +847,11 @@ sudo systemctl disable --now \
   receipt-ocr-llm.timer \
   receipt-ocr-llm-health.timer
 
+sudo systemctl stop \
+  receipt-ocr-poc.service \
+  receipt-ocr-llm.service \
+  receipt-ocr-llm-health.service
+
 sudo mv /opt/receipt-ocr/.venv \
   /opt/receipt-ocr/.venv-py39-backup
 sudo mv /opt/receipt-ocr/.venv-py311 \
