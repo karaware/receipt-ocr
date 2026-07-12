@@ -785,6 +785,86 @@ sudo -u receipt-ocr /bin/bash -c '
 
 `retry_ready=true` の後、次回の `--once` またはtimer実行で再処理される。
 
+## 13. Webで確認待ちレシートを確定する
+
+VM上のFirestoreサービスアカウントからFirebaseプロジェクトIDを確認する。
+
+```bash
+PROJECT_ID=$(sudo jq -r '.project_id' \
+  /etc/receipt-ocr-poc/secrets/firestore.json)
+echo "https://${PROJECT_ID}.web.app"
+```
+
+表示されたURLをPCまたはスマートフォンのブラウザで開き、許可済みGoogleアカウントでログインする。
+ホームの「確認待ち」件数を確認し、左メニューまたは画面下部の **確認** を開く。対象レシートを選択して
+店名、日付、合計、明細、カテゴリを修正し、確定する。確定後は `receipts.status` が `confirmed` になり、
+同じレシートに紐づく未解決alertも解決済みになる。
+
+`404` になる場合はWebアプリがFirebase Hostingへ未デプロイである。Macのリポジトリから
+`firebase deploy --only hosting` を実行し、表示されたHosting URLを使う。
+
+## 14. 既存VMをPython 3.11へ更新する
+
+Python 3.9はEOL警告が出るため、稼働中venvを直接変更せず、Python 3.11のvenvを別名で作成してから
+切り替える。まずtimerを停止し、必要パッケージを導入する。
+
+```bash
+sudo systemctl disable --now \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
+
+sudo dnf -y install \
+  python3.11 \
+  python3.11-devel \
+  python3.11-pip
+
+python3.11 --version
+sudo test ! -e /opt/receipt-ocr/.venv-py311
+sudo test ! -e /opt/receipt-ocr/.venv-py39-backup
+```
+
+新しいvenvへ依存関係を導入し、切替前に全テストを実行する。
+
+```bash
+sudo -u receipt-ocr python3.11 -m venv \
+  /opt/receipt-ocr/.venv-py311
+
+sudo -u receipt-ocr env PIP_NO_CACHE_DIR=1 \
+  /opt/receipt-ocr/.venv-py311/bin/python -m pip install \
+  --upgrade pip setuptools wheel
+
+sudo -u receipt-ocr env PIP_NO_CACHE_DIR=1 \
+  /opt/receipt-ocr/.venv-py311/bin/python -m pip install \
+  -e /opt/receipt-ocr
+
+sudo -u receipt-ocr \
+  /opt/receipt-ocr/.venv-py311/bin/python -m unittest discover \
+  -s /opt/receipt-ocr/tests
+```
+
+テスト成功後、旧venvをバックアップして新venvへ切り替える。systemdのパスは `.venv` のままなので
+unitファイルの変更は不要である。
+
+```bash
+sudo mv /opt/receipt-ocr/.venv \
+  /opt/receipt-ocr/.venv-py39-backup
+sudo mv /opt/receipt-ocr/.venv-py311 \
+  /opt/receipt-ocr/.venv
+
+sudo -u receipt-ocr \
+  /opt/receipt-ocr/.venv/bin/python --version
+
+sudo systemctl start receipt-ocr-llm-health.service
+sudo systemctl enable --now \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
+```
+
+`Python 3.11.x`、health checkの成功、3 timerの `active` を確認する。切替後に問題がある場合はtimerを
+停止し、`.venv` を `.venv-py311-failed` へ移動して `.venv-py39-backup` を `.venv` へ戻す。
+
 ## 完了条件
 
 - Driveサービスアカウントが `receipt-inbox-poc` だけを閲覧できる

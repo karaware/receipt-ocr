@@ -47,9 +47,9 @@ dnf -y install \
   git \
   libffi-devel \
   openssl-devel \
-  python3 \
-  python3-devel \
-  python3-pip \
+  python3.11 \
+  python3.11-devel \
+  python3.11-pip \
   jq
 update-ca-trust
 
@@ -96,9 +96,9 @@ chown "${CODEX_USER}:${CODEX_GROUP}" "${CODEX_STATE_DIR}/.codex/config.toml"
 chmod 0600 "${CODEX_STATE_DIR}/.codex/config.toml"
 
 if [[ -d "${APP_DIR}/.git" ]]; then
-  git -C "${APP_DIR}" fetch --prune origin
-  git -C "${APP_DIR}" checkout "${REPO_REF}"
-  git -C "${APP_DIR}" pull --ff-only origin "${REPO_REF}"
+  git -c safe.directory="${APP_DIR}" -C "${APP_DIR}" fetch --prune origin
+  git -c safe.directory="${APP_DIR}" -C "${APP_DIR}" checkout "${REPO_REF}"
+  git -c safe.directory="${APP_DIR}" -C "${APP_DIR}" pull --ff-only origin "${REPO_REF}"
 elif [[ -e "${APP_DIR}" ]]; then
   echo "${APP_DIR} already exists but is not a Git checkout; refusing to overwrite it" >&2
   exit 1
@@ -127,7 +127,7 @@ for required in \
 done
 
 chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}"
-sudo -u "${APP_USER}" python3 -m venv "${APP_DIR}/.venv"
+sudo -u "${APP_USER}" python3.11 -m venv "${APP_DIR}/.venv"
 sudo -u "${APP_USER}" env PIP_NO_CACHE_DIR=1 "${APP_DIR}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
 sudo -u "${APP_USER}" env PIP_NO_CACHE_DIR=1 "${APP_DIR}/.venv/bin/python" -m pip install -e "${APP_DIR}"
 
