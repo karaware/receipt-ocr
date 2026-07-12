@@ -113,6 +113,35 @@ ATC 0000000075
         self.assertEqual(receipt.total_amount, 4389)
         self.assertNotEqual(receipt.total_amount, 224574)
 
+    def test_parse_matsufukudo_receipt_with_spaced_total(self):
+        text = """御菓子司
+(有)松福堂正一
+大阪市旭区赤川2丁目5-17
+TEL06-6929-5608
+T9120002000408
+2026年05月23日(土) 11時07分
+外税 8.00%
+000005 赤飯 ¥300
+000001 和菓子
+¥200X 3点 ¥600
+000001 和菓子
+¥150X 2点 ¥300
+小計 6点 ¥1,200
+(外税 8.00%対象額 ¥1,200)
+外税 8.00% ¥96
+合言十 ¥1, 296
+現金 ¥1,306
+お釣り ¥10
+責任者: 責任者1
+店 No.00001 レジ:0001 レシートNo.9628
+"""
+        receipt = parse_receipt(text, CONFIG)
+
+        self.assertEqual(receipt.shop_name, "(有)松福堂正一")
+        self.assertEqual(receipt.purchased_at, "2026-05-23")
+        self.assertEqual(receipt.total_amount, 1296)
+        self.assertNotEqual(receipt.total_amount, 600)
+
 
 if __name__ == "__main__":
     unittest.main()

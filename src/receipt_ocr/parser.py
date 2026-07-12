@@ -26,7 +26,14 @@ DATE_PATTERNS = [
     re.compile(r"(20\d{2})[年/\-.](\d{1,2})[月/\-.](\d{1,2})"),
     re.compile(r"(\d{2})[年/\-.](\d{1,2})[月/\-.](\d{1,2})"),
 ]
-AMOUNT_RE = re.compile(r"(-)?[¥￥]?\s*([0-9０-９,，]{2,})\s*円?")
+AMOUNT_RE = re.compile(r"(-)?[¥￥]?\s*([0-9０-９][0-9０-９,，\s]{1,})\s*円?")
+SHOP_NAME_SKIP_KEYWORDS = [
+    "領収証",
+    "レシート",
+    "お客様控",
+    "御菓子",
+    "菓子司",
+]
 META_KEYWORDS = [
     "TEL",
     "電話",
@@ -79,6 +86,7 @@ NON_ITEM_NAME_KEYWORDS = [
 MAX_REASONABLE_AMOUNT = 1_000_000
 DEFAULT_TOTAL_KEYWORDS = [
     "合計",
+    "合言十",
     "税込",
     "日計金額",
     "合計金額",
@@ -123,6 +131,8 @@ def _clean_lines(text: str) -> List[str]:
 def _guess_shop_name(lines: Iterable[str], ignore_keywords: List[str]) -> str:
     for line in lines:
         if any(keyword in line for keyword in ignore_keywords):
+            continue
+        if any(keyword in line for keyword in SHOP_NAME_SKIP_KEYWORDS):
             continue
         if _amount_from_line(line) is not None:
             continue
@@ -247,7 +257,7 @@ def _amounts_from_line(line: str) -> List[int]:
     amounts = []
     for match in AMOUNT_RE.finditer(normalized):
         raw = match.group(2)
-        digits = raw.replace(",", "").replace("，", "")
+        digits = re.sub(r"\s+", "", raw).replace(",", "").replace("，", "")
         if len(digits) > 7:
             continue
         amount = int(digits)
@@ -294,7 +304,7 @@ def _guess_block_items(
 
 def _single_amount_line(line: str) -> Optional[int]:
     normalized = _to_ascii_digits(line).strip()
-    if not re.fullmatch(r"-?[¥￥]?\s*[0-9,]{2,}\s*※?", normalized):
+    if not re.fullmatch(r"-?[¥￥]?\s*[0-9, ]{2,}\s*※?", normalized):
         return None
     return _amount_from_line(normalized)
 
