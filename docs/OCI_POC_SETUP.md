@@ -227,10 +227,10 @@ deploy/oci/cloud-init-poc.sh
 
 - OS更新とGit、Python、ビルド依存パッケージのインストール
 - タイムゾーンを `Asia/Tokyo` に設定
-- `receipt-ocr` 専用ユーザー、設定・秘密情報・作業ディレクトリの作成
+- `receipt-ocr` と `receipt-ocr-codex` 専用ユーザー、設定・秘密情報・共有spoolの作成
 - 公開GitHubリポジトリの `main` を `/opt/receipt-ocr` へclone
 - Python venv作成、依存関係インストール、ユニットテスト
-- systemd service/timerの配置
+- Vision/I/O worker、Codex worker、週次認証health checkのsystemd service/timer配置
 - SSHパスワードログインとrootログインの無効化
 
 サービスアカウント鍵、DriveフォルダID、世帯IDはcloud-initへ入れない。OCIのuser dataはVM内のメタデータ

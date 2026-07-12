@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Receipt LLM result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "driveFileId", "inputSha256", "shopName", "purchasedAt", "totalAmount", "items", "warnings"],
+  "properties": {
+    "schemaVersion": {"const": "receipt-llm-result/v1"},
+    "driveFileId": {"type": "string", "minLength": 1, "maxLength": 200},
+    "inputSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "shopName": {"$ref": "#/$defs/textField"},
+    "purchasedAt": {"$ref": "#/$defs/dateField"},
+    "totalAmount": {"$ref": "#/$defs/amountField"},
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {"$ref": "#/$defs/item"}
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "maxLength": 200}
+    }
+  },
+  "$defs": {
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    "evidence": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "integer", "minimum": 1}
+    },
+    "textField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "confidence", "evidenceLineNumbers"],
+      "properties": {
+        "value": {"type": "string", "minLength": 1, "maxLength": 120},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "evidenceLineNumbers": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "dateField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "confidence", "evidenceLineNumbers"],
+      "properties": {
+        "value": {"type": "string", "format": "date"},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "evidenceLineNumbers": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "amountField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "confidence", "evidenceLineNumbers"],
+      "properties": {
+        "value": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "evidenceLineNumbers": {"$ref": "#/$defs/evidence"}
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "amount", "kind", "majorCategory", "minorCategory", "confidence", "evidenceLineNumbers"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "amount": {"type": "integer", "minimum": -1000000, "maximum": 1000000, "not": {"const": 0}},
+        "kind": {"type": "string", "enum": ["product", "discount", "tax", "fee", "rounding"]},
+        "majorCategory": {"type": "string", "minLength": 1, "maxLength": 80},
+        "minorCategory": {"type": "string", "minLength": 1, "maxLength": 80},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "evidenceLineNumbers": {"$ref": "#/$defs/evidence"}
+      }
+    }
+  }
+}

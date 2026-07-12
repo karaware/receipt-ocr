@@ -48,9 +48,18 @@ def main() -> int:
     worker_parser.add_argument("--once", action="store_true")
     worker_parser.add_argument("--dry-run", action="store_true")
 
+    llm_parser = subparsers.add_parser("llm-worker", help="Run the isolated Codex receipt parser")
+    llm_parser.add_argument(
+        "worker_action", nargs="?",
+        choices=("status", "auth-status", "health-check", "cleanup"),
+    )
+    llm_parser.add_argument("--once", action="store_true")
+    llm_parser.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
     config = load_config(args.config)
-    ensure_dirs(config)
+    if args.command in {"run", "sync-drive", "review", "sync-cloud", "migrate-cloud"}:
+        ensure_dirs(config)
 
     if args.command == "run":
         if args.sync_drive:
@@ -106,6 +115,29 @@ def main() -> int:
         result = worker.run_once(dry_run=args.dry_run)
         print(json.dumps(result, ensure_ascii=False))
         return 1 if result["status"] in {"failed", "unknown_after_request", "invalid_source"} else 0
+
+    if args.command == "llm-worker":
+        import json
+        from .llm_worker import LlmWorker, LlmWorkerSettings
+
+        worker = LlmWorker(LlmWorkerSettings.from_config(config))
+        if args.worker_action == "status":
+            result = worker.status()
+        elif args.worker_action == "auth-status":
+            result = worker.auth_status()
+        elif args.worker_action == "health-check":
+            result = worker.health_check()
+        elif args.worker_action == "cleanup":
+            result = worker.cleanup()
+        else:
+            if not args.once and not args.dry_run:
+                parser.error("llm-worker requires --once, --dry-run, or an action")
+            result = worker.run_once(dry_run=args.dry_run)
+        print(json.dumps(result, ensure_ascii=False))
+        return 1 if result["status"] in {
+            "auth_blocked", "worker_unavailable", "codex_failed", "timeout", "network",
+            "server_error", "spool_cleanup_failed",
+        } else 0
 
     parser.error(f"unknown command: {args.command}")
     return 2

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 
-TERMINAL_STATUSES = {"completed", "confirmed", "needs_review", "unknown_after_request"}
+TERMINAL_STATUSES = {
+    "completed", "confirmed", "needs_review", "unknown_after_request",
+    "llm_pending", "llm_running", "llm_retry_wait", "llm_completed", "auth_blocked",
+}
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,126 @@ class FirestoreWriter:
             "status": result["status"], "error": None, "updatedAt": _server_timestamp()
         })
         batch.commit()
+
+    def mark_llm_state(
+        self, file_id: str, status: str, **fields: Any
+    ) -> None:
+        payload = {"status": status, "updatedAt": _server_timestamp()}
+        payload.update(fields)
+        self._jobs.document(file_id).update(payload)
+
+    def list_allowed_categories(self) -> list[Mapping[str, Any]]:
+        values: list[Mapping[str, Any]] = []
+        for document in self._base.collection("categories").stream():
+            data = document.to_dict() or {}
+            if data.get("type") != "expense" or not data.get("name"):
+                continue
+            minors = [str(value) for value in data.get("subcategories", []) if value]
+            values.append({"major": str(data["name"]), "minor": minors or ["その他"]})
+        if not any(value["major"] == "調整" for value in values):
+            values.append({"major": "調整", "minor": ["値引き・税", "端数", "その他"]})
+        if not any(value["major"] == "その他" for value in values):
+            values.append({"major": "その他", "minor": ["未分類", "その他"]})
+        return sorted(values, key=lambda value: str(value["major"]))
+
+    def publish_llm_result(
+        self,
+        file_id: str,
+        receipt: Mapping[str, Any],
+        items: list[Mapping[str, Any]],
+        audit: Mapping[str, Any],
+    ) -> None:
+        if len(items) > 200:
+            raise ValueError("A receipt cannot contain more than 200 LLM items")
+        from firebase_admin import firestore
+
+        receipt_ref = self._base.collection("receipts").document(file_id)
+        poc_ref = self._receipts.document(file_id)
+        job_ref = self._jobs.document(file_id)
+        batch = self._db.batch()
+        now = firestore.SERVER_TIMESTAMP
+        exists = receipt_ref.get().exists
+        status = str(receipt["status"])
+        if not exists:
+            batch.create(receipt_ref, {
+                "shopName": receipt.get("shopName") or "",
+                "purchasedAt": receipt.get("purchasedAt") or "",
+                "totalAmount": int(receipt.get("totalAmount") or 0),
+                "payer": receipt.get("payer") or "",
+                "status": status,
+                "reviewReason": receipt.get("reviewReason") or "reconciled",
+                "difference": receipt.get("difference"),
+                "sourceId": file_id,
+                "source": "ocr",
+                "parseSource": audit.get("parseSource"),
+                "parserVersion": audit.get("parserVersion"),
+                "llmModel": audit.get("llmModel"),
+                "llmPromptVersion": audit.get("llmPromptVersion"),
+                "llmSchemaVersion": audit.get("llmSchemaVersion"),
+                "llmWarnings": list(audit.get("llmWarnings", [])),
+                "createdAt": now,
+                "updatedAt": now,
+            })
+            for index, item in enumerate(items):
+                ref = self._base.collection("transactions").document(f"{file_id}-{index:03d}")
+                batch.create(ref, {
+                    "type": "expense",
+                    "amount": int(item["amount"]),
+                    "date": receipt.get("purchasedAt") or "",
+                    "majorCategory": item.get("majorCategory") or "その他",
+                    "minorCategory": item.get("minorCategory") or "未分類",
+                    "itemName": item.get("name") or "",
+                    "memo": "",
+                    "payer": receipt.get("payer") or "",
+                    "shopName": receipt.get("shopName") or "",
+                    "source": "ocr",
+                    "receiptId": file_id,
+                    "receiptStatus": status,
+                    "createdAt": now,
+                    "updatedAt": now,
+                })
+        poc_payload = dict(receipt)
+        poc_payload.update(dict(audit))
+        poc_payload.update({"driveFileId": file_id, "createdAt": now, "updatedAt": now})
+        batch.set(poc_ref, poc_payload, merge=False)
+        batch.update(job_ref, {
+            "status": status,
+            "parseSource": audit.get("parseSource"),
+            "llmLastModel": audit.get("llmModel"),
+            "llmPromptVersion": audit.get("llmPromptVersion"),
+            "llmSchemaVersion": audit.get("llmSchemaVersion"),
+            "error": None,
+            "updatedAt": now,
+        })
+        batch.commit()
+
+    def create_alert(
+        self,
+        code: str,
+        message: str,
+        file_id: str | None = None,
+        severity: str = "error",
+    ) -> None:
+        key = hashlib.sha256(f"{code}:{file_id or ''}".encode("utf-8")).hexdigest()[:32]
+        ref = self._base.collection("system_alerts").document(key)
+        snapshot = ref.get()
+        existing = snapshot.to_dict() if snapshot.exists else {}
+        if existing and existing.get("resolvedAt") is None:
+            return
+        ref.set({
+            "code": code,
+            "severity": severity,
+            "driveFileId": file_id,
+            "message": message[:200],
+            "createdAt": _server_timestamp(),
+            "resolvedAt": None,
+        }, merge=False)
+
+    def resolve_alert(self, code: str, file_id: str | None = None) -> None:
+        key = hashlib.sha256(f"{code}:{file_id or ''}".encode("utf-8")).hexdigest()[:32]
+        ref = self._base.collection("system_alerts").document(key)
+        if ref.get().exists:
+            ref.update({"resolvedAt": _server_timestamp()})
 
     def mark_unknown(self, file_id: str, error: Exception) -> None:
         self._set_failure(file_id, "unknown_after_request", error)

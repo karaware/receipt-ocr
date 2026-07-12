@@ -3,7 +3,7 @@ import {
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import { db, householdId } from "./firebase";
-import type { Budget, Category, Receipt, Transaction } from "./types";
+import type { Budget, Category, Receipt, SystemAlert, Transaction } from "./types";
 
 const root = () => doc(db, "households", householdId);
 const sub = (name: string) => collection(root(), name);
@@ -29,6 +29,11 @@ export async function loadBudgets(month: string): Promise<Budget[]> {
 
 export async function loadReviewReceipts(): Promise<Receipt[]> {
   return values<Receipt>(await getDocs(query(sub("receipts"), where("status", "==", "needs_review"), orderBy("purchasedAt", "desc"))));
+}
+
+export async function loadSystemAlerts(): Promise<SystemAlert[]> {
+  const alerts = values<SystemAlert>(await getDocs(sub("system_alerts")));
+  return alerts.filter((alert) => !alert.resolvedAt);
 }
 
 export async function loadReceiptItems(receiptId: string): Promise<Transaction[]> {
@@ -66,6 +71,10 @@ export async function confirmReceipt(receipt: Receipt, items: Transaction[]): Pr
   const batch = writeBatch(db);
   batch.update(doc(sub("receipts"), receipt.id), { ...receipt, status: "confirmed", difference: 0, reviewReason: "reconciled", updatedAt: serverTimestamp() });
   const stored = await getDocs(query(sub("transactions"), where("receiptId", "==", receipt.id)));
+  const alerts = await getDocs(query(sub("system_alerts"), where("driveFileId", "==", receipt.id)));
+  alerts.docs
+    .filter((alert) => alert.data().resolvedAt == null)
+    .forEach((alert) => batch.update(alert.ref, { resolvedAt: serverTimestamp() }));
   const retained = new Set(items.filter((item) => !item.id.startsWith("new-")).map((item) => item.id));
   stored.docs.filter((item) => !retained.has(item.id)).forEach((item) => batch.delete(item.ref));
   for (const item of items) {

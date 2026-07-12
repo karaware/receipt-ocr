@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=receipt-ocr
 Group=receipt-ocr
+SupplementaryGroups=receipt-ocr-spool
 WorkingDirectory=/opt/receipt-ocr
 EnvironmentFile=/etc/receipt-ocr-poc/config.env
 ExecStart=/opt/receipt-ocr/.venv/bin/python -m receipt_ocr --config /etc/receipt-ocr-poc/config.json cloud-worker --poc --once

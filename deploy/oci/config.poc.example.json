@@ -29,7 +29,19 @@
     "vision_service_account_path": "/etc/receipt-ocr-poc/secrets/vision.json",
     "firestore_service_account_path": "/etc/receipt-ocr-poc/secrets/firestore.json",
     "work_dir": "/var/lib/receipt-ocr-poc/work",
-    "max_vision_units": 20
+    "max_vision_units": 20,
+    "llm": {
+      "enabled": false,
+      "spool_dir": "/var/lib/receipt-ocr-poc/llm-spool",
+      "codex_bin": "/var/lib/receipt-ocr-codex/.local/bin/codex",
+      "schema_path": "/opt/receipt-ocr/schema/receipt-llm-result-v1.json",
+      "primary_model": "gpt-5.6-luna",
+      "retry_model": "gpt-5.6-terra",
+      "primary_timeout_seconds": 180,
+      "retry_timeout_seconds": 240,
+      "deadline_hours": 24,
+      "unresolved_retention_days": 7
+    }
   },
   "parser": {
     "tax_included_keywords": ["税込", "合計", "お買上計", "総合計", "合 計"],

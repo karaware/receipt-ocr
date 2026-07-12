@@ -36,3 +36,12 @@ export interface Category {
 }
 
 export interface Budget { id: string; month: string; category: string; amount: number }
+
+export interface SystemAlert {
+  id: string;
+  code: string;
+  severity: "warning" | "error";
+  driveFileId?: string | null;
+  message: string;
+  resolvedAt?: unknown;
+}

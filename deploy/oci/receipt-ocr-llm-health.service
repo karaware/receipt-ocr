@@ -1,0 +1,30 @@
+[Unit]
+Description=Refresh and verify Receipt OCR Codex authentication
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=receipt-ocr-codex
+Group=receipt-ocr-codex
+SupplementaryGroups=receipt-ocr receipt-ocr-spool
+WorkingDirectory=/var/lib/receipt-ocr-poc/llm-spool
+Environment=HOME=/var/lib/receipt-ocr-codex
+Environment=CODEX_HOME=/var/lib/receipt-ocr-codex/.codex
+ExecStart=/opt/receipt-ocr/.venv/bin/python -m receipt_ocr --config /etc/receipt-ocr-poc/config.json llm-worker health-check
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+InaccessiblePaths=/etc/receipt-ocr-poc/secrets
+ReadWritePaths=/var/lib/receipt-ocr-codex /var/lib/receipt-ocr-poc/llm-spool
+MemoryMax=2G
+TasksMax=64
+TimeoutStartSec=5min
+UMask=0007

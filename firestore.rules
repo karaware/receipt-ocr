@@ -24,7 +24,8 @@ service cloud.firestore {
           && collection != 'allowed_emails'
           && collection != 'poc_ocr_jobs'
           && collection != 'poc_ocr_usage'
-          && collection != 'poc_receipts';
+          && collection != 'poc_receipts'
+          && collection != 'system_alerts';
       }
 
       match /poc_ocr_jobs/{document=**} {
@@ -40,6 +41,14 @@ service cloud.firestore {
       match /poc_receipts/{document=**} {
         allow read: if householdMember(householdId);
         allow write: if false;
+      }
+
+      match /system_alerts/{alertId} {
+        allow read: if householdMember(householdId);
+        allow update: if householdMember(householdId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resolvedAt'])
+          && request.resource.data.resolvedAt is timestamp;
+        allow create, delete: if false;
       }
     }
 

@@ -8,6 +8,15 @@ from typing import Any, Mapping
 from .categorizer import categorize_items
 from .drive_api_client import DriveApiClient, DriveImage
 from .firestore_writer import FirestoreWriter, create_firestore_writer
+from .llm_contract import (
+    LlmValidationError,
+    PROMPT_VERSION,
+    RESULT_SCHEMA_VERSION,
+    ValidatedLlmReceipt,
+    validate_result,
+)
+from .llm_spool import LlmSpool, SpoolJob, load_error, load_result
+from .llm_worker import LlmWorkerSettings
 from .parser import parse_receipt
 from .reconciliation import reconcile_receipt
 from .source_metadata import resolve_payer
@@ -64,22 +73,38 @@ class CloudWorker:
         drive: DriveApiClient,
         vision: VisionClient,
         writer: FirestoreWriter,
+        llm_settings: LlmWorkerSettings | None = None,
+        llm_spool: LlmSpool | None = None,
     ) -> None:
         self._config = config
         self._settings = settings
         self._drive = drive
         self._vision = vision
         self._writer = writer
+        self._llm_settings = llm_settings or LlmWorkerSettings.from_config(config)
+        self._llm_spool = llm_spool or LlmSpool(self._llm_settings.spool_dir)
 
     def candidates(self) -> list[DriveImage]:
         return self._drive.list_images(self._settings.drive_folder_id)
 
     def run_once(self, dry_run: bool = False) -> dict[str, Any]:
+        if self._llm_settings.enabled and not dry_run:
+            health_status = self._sync_llm_health()
+            self._sync_llm_job_states()
+            finalized = self._finalize_llm_result()
+            if finalized:
+                return finalized
+            if health_status == "auth_blocked":
+                return {"status": "auth_blocked"}
         for image in self.candidates():
             job = self._writer.get_job(image.file_id)
             if job:
                 status = job.get("status")
-                if status in {"completed", "confirmed", "needs_review", "vision_reserved", "unknown_after_request"}:
+                if status in {
+                    "completed", "confirmed", "needs_review", "vision_reserved",
+                    "unknown_after_request", "llm_pending", "llm_running",
+                    "llm_retry_wait", "llm_completed", "auth_blocked",
+                }:
                     continue
                 if status == "failed" and job.get("visionAttempted", False):
                     continue
@@ -87,6 +112,55 @@ class CloudWorker:
                 return {"status": "candidate", "driveFileId": image.file_id, "sourceName": image.name}
             return self._process(image)
         return {"status": "idle"}
+
+    def _sync_llm_health(self) -> str | None:
+        health = self._llm_spool.read_health()
+        if not health:
+            return None
+        status = str(health.get("status") or "")
+        if status == "ok":
+            self._writer.resolve_alert("codex_auth_blocked")
+            self._writer.resolve_alert("codex_worker_unavailable")
+            self._writer.resolve_alert("spool_cleanup_failed")
+        elif status == "auth_blocked":
+            self._writer.create_alert(
+                "codex_auth_blocked", "Codexの再認証が必要です", severity="error"
+            )
+        elif status == "spool_cleanup_failed":
+            self._writer.create_alert(
+                "spool_cleanup_failed",
+                "LLM一時データの期限切れ削除に失敗しました",
+                severity="error",
+            )
+        elif status:
+            self._writer.create_alert(
+                "codex_worker_unavailable",
+                "Codex workerのhealth checkに失敗しました",
+                severity="error",
+            )
+        return status or None
+
+    def _sync_llm_job_states(self) -> None:
+        for job in self._llm_spool.jobs("running"):
+            self._writer.mark_llm_state(
+                job.file_id,
+                "llm_running",
+                llmAttempted=True,
+                llmAttempts=int(job.meta.get("attempts", 0)),
+                llmLastModel=job.meta.get("model"),
+            )
+        for job in self._llm_spool.jobs("pending"):
+            if int(job.meta.get("attempts", 0)) == 0:
+                continue
+            self._writer.mark_llm_state(
+                job.file_id,
+                "llm_retry_wait",
+                llmAttempted=True,
+                llmAttempts=int(job.meta.get("attempts", 0)),
+                llmLastModel=job.meta.get("model"),
+                llmFailureCode=job.meta.get("lastFailureCode"),
+                llmNextAttemptAt=job.meta.get("nextAttemptAt"),
+            )
 
     def _process(self, image: DriveImage) -> dict[str, Any]:
         try:
@@ -122,6 +196,32 @@ class CloudWorker:
                 "parsedItems": [_item_payload(item) for item in parsed.items],
                 "reconciledItems": [_item_payload(item) for item in reconciled.items],
             }
+            if self._llm_settings.enabled:
+                try:
+                    allowed_categories = self._writer.list_allowed_categories()
+                    rule_candidate = dict(result)
+                    self._llm_spool.enqueue(
+                        image.file_id,
+                        target,
+                        ocr_text,
+                        rule_candidate,
+                        list(allowed_categories),
+                        payer,
+                        self._llm_settings.primary_model,
+                        self._llm_settings.deadline_hours,
+                    )
+                except (OSError, ValueError):
+                    return self._publish_direct_rule_fallback(image.file_id, result)
+                self._writer.mark_llm_state(
+                    image.file_id,
+                    "llm_pending",
+                    llmAttempted=False,
+                    llmAttempts=0,
+                    llmPrimaryModel=self._llm_settings.primary_model,
+                    llmPromptVersion=PROMPT_VERSION,
+                    llmSchemaVersion=RESULT_SCHEMA_VERSION,
+                )
+                return {"status": "llm_pending", "driveFileId": image.file_id}
             self._writer.complete(image.file_id, result)
             return {"status": reconciled.status, "driveFileId": image.file_id}
         except VisionRequestIndeterminate as error:
@@ -133,9 +233,200 @@ class CloudWorker:
         finally:
             target.unlink(missing_ok=True)
 
+    def _publish_direct_rule_fallback(
+        self, file_id: str, candidate: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        status = "confirmed" if candidate.get("status") == "confirmed" else "needs_review"
+        receipt = dict(candidate)
+        receipt.update({
+            "status": status,
+            "reviewReason": (
+                candidate.get("reviewReason") if status == "confirmed" else "llm_exhausted"
+            ),
+        })
+        items = [
+            _formal_item(item)
+            for item in candidate.get("reconciledItems", [])
+            if isinstance(item, Mapping)
+        ]
+        self._writer.publish_llm_result(file_id, receipt, items, {
+            "parseSource": "rule_fallback",
+            "parserVersion": "rule/v1",
+            "llmModel": None,
+            "llmPromptVersion": PROMPT_VERSION,
+            "llmSchemaVersion": RESULT_SCHEMA_VERSION,
+            "llmWarnings": ["spool_unavailable"],
+        })
+        self._writer.create_alert(
+            "codex_worker_unavailable",
+            "LLM一時データを作成できないためルール解析を採用しました",
+            severity="error",
+        )
+        if status == "needs_review":
+            self._writer.create_alert(
+                "llm_exhausted", "LLMとルール解析で自動確定できませんでした",
+                file_id, "warning",
+            )
+        return {"status": status, "driveFileId": file_id, "parseSource": "rule_fallback"}
+
+    def _finalize_llm_result(self) -> dict[str, Any] | None:
+        job = self._llm_spool.next_completed()
+        if not job:
+            return None
+        self._writer.mark_llm_state(
+            job.file_id,
+            "llm_completed",
+            llmAttempted=True,
+            llmAttempts=int(job.meta.get("attempts", 0)),
+            llmLastModel=job.meta.get("model"),
+        )
+        error = load_error(job)
+        if error:
+            return self._fallback_from_job(job, str(error.get("code") or "codex_failed"))
+        try:
+            raw = load_result(job)
+            validated = validate_result(raw, job.request)
+        except (ValueError, LlmValidationError) as validation_error:
+            errors = (
+                validation_error.errors
+                if isinstance(validation_error, LlmValidationError)
+                else [str(validation_error)]
+            )
+            if job.meta.get("modelStage") != "retry":
+                self._llm_spool.retry_with_model(job, self._llm_settings.retry_model)
+                self._writer.mark_llm_state(
+                    job.file_id,
+                    "llm_retry_wait",
+                    llmAttempted=True,
+                    llmLastModel=job.meta.get("model"),
+                    llmFailureCode="validation_failed",
+                    llmValidationErrors=list(errors)[:20],
+                )
+                return {
+                    "status": "llm_retry_wait",
+                    "driveFileId": job.file_id,
+                    "model": self._llm_settings.retry_model,
+                }
+            return self._fallback_from_job(job, "validation_failed")
+        return self._publish_validated(job, validated)
+
+    def _publish_validated(
+        self, job: SpoolJob, validated: ValidatedLlmReceipt
+    ) -> dict[str, Any]:
+        status = "needs_review" if validated.soft_warnings else "confirmed"
+        reason = "llm_warning" if validated.soft_warnings else "reconciled"
+        items = [
+            {
+                "name": item.name,
+                "amount": item.amount,
+                "kind": item.kind,
+                "majorCategory": item.major_category,
+                "minorCategory": item.minor_category,
+                "confidence": item.confidence,
+            }
+            for item in validated.items
+        ]
+        confidence_map = {"high": 0.9, "medium": 0.6, "low": 0.3}
+        receipt = {
+            "driveFileId": job.file_id,
+            "shopName": validated.shop_name,
+            "purchasedAt": validated.purchased_at,
+            "totalAmount": validated.total_amount,
+            "payer": job.meta.get("payer") or "",
+            "status": status,
+            "reviewReason": reason,
+            "difference": 0,
+            "parsedItems": [
+                {
+                    "name": item["name"],
+                    "amount": item["amount"],
+                    "category": item["majorCategory"],
+                    "minorCategory": item["minorCategory"],
+                    "confidence": confidence_map[item["confidence"]],
+                }
+                for item in items
+            ],
+            "reconciledItems": [
+                {
+                    "name": item["name"],
+                    "amount": item["amount"],
+                    "category": item["majorCategory"],
+                    "minorCategory": item["minorCategory"],
+                    "confidence": confidence_map[item["confidence"]],
+                }
+                for item in items
+            ],
+        }
+        audit = {
+            "parseSource": "codex",
+            "parserVersion": "codex-cli/v1",
+            "llmModel": job.meta.get("model"),
+            "llmPromptVersion": PROMPT_VERSION,
+            "llmSchemaVersion": RESULT_SCHEMA_VERSION,
+            "llmWarnings": list(validated.warnings) + list(validated.soft_warnings),
+        }
+        self._writer.publish_llm_result(job.file_id, receipt, items, audit)
+        self._writer.resolve_alert("llm_exhausted", job.file_id)
+        self._writer.resolve_alert("codex_rate_limit_over_24h", job.file_id)
+        if status == "needs_review":
+            self._llm_spool.move_unresolved(job)
+        else:
+            self._llm_spool.remove(job)
+        return {"status": status, "driveFileId": job.file_id, "parseSource": "codex"}
+
+    def _fallback_from_job(self, job: SpoolJob, failure_code: str) -> dict[str, Any]:
+        candidate = job.request.get("ruleCandidate")
+        if not isinstance(candidate, Mapping):
+            raise ValueError("LLM spool has no rule candidate")
+        status = str(candidate.get("status") or "needs_review")
+        if status != "confirmed":
+            status = "needs_review"
+        reconciled_items = candidate.get("reconciledItems", [])
+        items = [
+            _formal_item(item)
+            for item in reconciled_items
+            if isinstance(item, Mapping)
+        ]
+        receipt = dict(candidate)
+        receipt.update({
+            "payer": job.meta.get("payer") or candidate.get("payer") or "",
+            "status": status,
+            "reviewReason": (
+                candidate.get("reviewReason") if status == "confirmed" else "llm_exhausted"
+            ),
+        })
+        audit = {
+            "parseSource": "rule_fallback",
+            "parserVersion": "rule/v1",
+            "llmModel": job.meta.get("model"),
+            "llmPromptVersion": PROMPT_VERSION,
+            "llmSchemaVersion": RESULT_SCHEMA_VERSION,
+            "llmWarnings": [failure_code],
+        }
+        self._writer.publish_llm_result(job.file_id, receipt, items, audit)
+        if failure_code == "auth_blocked":
+            self._writer.create_alert(
+                "codex_auth_blocked", "Codexの再認証が必要です", severity="error"
+            )
+        elif failure_code == "rate_limit":
+            self._writer.create_alert(
+                "codex_rate_limit_over_24h", "Codex利用上限が24時間以上継続しました",
+                job.file_id, "warning",
+            )
+        if status == "needs_review":
+            self._writer.create_alert(
+                "llm_exhausted", "LLMとルール解析で自動確定できませんでした",
+                job.file_id, "warning",
+            )
+            self._llm_spool.move_unresolved(job)
+        else:
+            self._llm_spool.remove(job)
+        return {"status": status, "driveFileId": job.file_id, "parseSource": "rule_fallback"}
+
 
 def create_worker(config: Mapping[str, Any]) -> CloudWorker:
     settings = PocSettings.from_config(config)
+    llm_settings = LlmWorkerSettings.from_config(config)
     return CloudWorker(
         config,
         settings,
@@ -146,6 +437,8 @@ def create_worker(config: Mapping[str, Any]) -> CloudWorker:
             settings.household_id,
             settings.max_vision_units,
         ),
+        llm_settings,
+        LlmSpool(llm_settings.spool_dir),
     )
 
 
@@ -155,4 +448,23 @@ def _item_payload(item: Any) -> dict[str, Any]:
         "amount": item.amount,
         "category": item.category,
         "confidence": item.confidence,
+    }
+
+
+def _formal_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    category = str(item.get("category") or "未分類")
+    if category == "調整":
+        name = str(item.get("name") or "")
+        minor = "端数" if "端数" in name else "値引き・税"
+        major = "調整"
+    elif category == "未分類":
+        major, minor = "その他", "未分類"
+    else:
+        major, minor = category, str(item.get("minorCategory") or "その他")
+    return {
+        "name": str(item.get("name") or ""),
+        "amount": int(item.get("amount") or 0),
+        "majorCategory": major,
+        "minorCategory": minor,
+        "confidence": float(item.get("confidence") or 0.0),
     }

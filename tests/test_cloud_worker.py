@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,11 +10,15 @@ from receipt_ocr.vision_client import VisionRequestIndeterminate
 
 
 class CloudWorkerTest(unittest.TestCase):
-    def _worker(self, tmp, writer, drive=None, vision=None):
+    def _worker(self, tmp, writer, drive=None, vision=None, llm_enabled=False):
         settings = PocSettings("folder", "home", "d", "v", "f", Path(tmp), 20, "me")
         config = {
             "parser": {"tax_included_keywords": ["合計"], "ignore_line_keywords": []},
             "categories": {"食費": ["パン"]},
+            "poc": {"llm": {
+                "enabled": llm_enabled,
+                "spool_dir": str(Path(tmp) / "llm-spool"),
+            }},
         }
         drive = drive or MagicMock()
         drive.list_images.return_value = [DriveImage("file-1", "receipt.jpg", "image/jpeg", 1)]
@@ -93,6 +98,161 @@ class CloudWorkerTest(unittest.TestCase):
             self.assertEqual(result["status"], "unknown_after_request")
             writer.mark_unknown.assert_called_once()
             writer.mark_failed.assert_not_called()
+
+    def test_llm_enabled_enqueues_without_storing_ocr_in_firestore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            writer.get_job.return_value = None
+            writer.reserve.return_value = MagicMock(reserved=True, reason="reserved")
+            writer.list_allowed_categories.return_value = [
+                {"major": "食費", "minor": ["その他"]},
+                {"major": "調整", "minor": ["値引き・税"]},
+            ]
+            drive = MagicMock()
+            drive.list_images.return_value = [DriveImage("file-1", "receipt.jpg", "image/jpeg", None)]
+            drive.download.side_effect = lambda image, target: Path(target).write_bytes(b"x")
+            vision = MagicMock()
+            vision.document_text.return_value = "店\n2026/06/28\nパン 100\n合計 100"
+
+            worker = self._worker(tmp, writer, drive, vision, llm_enabled=True)
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "llm_pending")
+            writer.complete.assert_not_called()
+            writer.mark_llm_state.assert_called_once()
+            self.assertNotIn("店\n2026", str(writer.method_calls))
+            job = worker._llm_spool.find("file-1")
+            self.assertIsNotNone(job)
+            assert job is not None
+            self.assertIn("パン 100", (job.path / "ocr.txt").read_text(encoding="utf-8"))
+
+    def test_completed_valid_llm_result_is_published_and_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            drive = MagicMock()
+            drive.list_images.return_value = []
+            worker = self._worker(tmp, writer, drive, llm_enabled=True)
+            spool = worker._llm_spool
+            image = Path(tmp) / "receipt.jpg"
+            image.write_bytes(b"image")
+            queued = spool.enqueue(
+                "file-1", image, "店\n2026/06/28\nパン 100\n合計 100",
+                {
+                    "shopName": "店", "purchasedAt": "2026-06-28",
+                    "totalAmount": 100, "status": "confirmed",
+                },
+                [{"major": "食費", "minor": ["その他"]}],
+                "me", "gpt-5.6-luna",
+            )
+            running = spool.acquire()
+            assert running is not None
+            request = running.request
+            raw = {
+                "schemaVersion": "receipt-llm-result/v1",
+                "driveFileId": "file-1",
+                "inputSha256": request["inputSha256"],
+                "shopName": {"value": "店", "confidence": "high", "evidenceLineNumbers": [1]},
+                "purchasedAt": {"value": "2026-06-28", "confidence": "high", "evidenceLineNumbers": [2]},
+                "totalAmount": {"value": 100, "confidence": "high", "evidenceLineNumbers": [4]},
+                "items": [{
+                    "name": "パン", "amount": 100, "kind": "product",
+                    "majorCategory": "食費", "minorCategory": "その他",
+                    "confidence": "high", "evidenceLineNumbers": [3],
+                }],
+                "warnings": [],
+            }
+            spool.complete(running, running.meta, result_text=json.dumps(raw))
+
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "confirmed")
+            writer.publish_llm_result.assert_called_once()
+            self.assertIsNone(spool.find(queued.file_id))
+
+    def test_invalid_primary_result_is_requeued_for_retry_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            drive = MagicMock()
+            drive.list_images.return_value = []
+            worker = self._worker(tmp, writer, drive, llm_enabled=True)
+            image = Path(tmp) / "receipt.jpg"
+            image.write_bytes(b"image")
+            worker._llm_spool.enqueue(
+                "file-1", image, "店\n合計 100",
+                {"status": "confirmed", "totalAmount": 100},
+                [{"major": "食費", "minor": ["その他"]}],
+                "me", "gpt-5.6-luna",
+            )
+            running = worker._llm_spool.acquire()
+            assert running is not None
+            worker._llm_spool.complete(running, running.meta, result_text="{}")
+
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "llm_retry_wait")
+            retried = worker._llm_spool.find("file-1")
+            assert retried is not None
+            self.assertEqual(retried.meta["model"], "gpt-5.6-terra")
+
+    def test_spool_failure_uses_validated_rule_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            writer.get_job.return_value = None
+            writer.reserve.return_value = MagicMock(reserved=True, reason="reserved")
+            writer.list_allowed_categories.return_value = [
+                {"major": "食費", "minor": ["その他"]},
+            ]
+            drive = MagicMock()
+            drive.list_images.return_value = [DriveImage("file-1", "receipt.jpg", "image/jpeg", None)]
+            drive.download.side_effect = lambda image, target: Path(target).write_bytes(b"x")
+            vision = MagicMock()
+            vision.document_text.return_value = "店\n2026/06/28\nパン 100\n合計 100"
+            worker = self._worker(tmp, writer, drive, vision, llm_enabled=True)
+            worker._llm_spool.enqueue = MagicMock(side_effect=OSError("disk full"))
+
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "confirmed")
+            self.assertEqual(result["parseSource"], "rule_fallback")
+            writer.publish_llm_result.assert_called_once()
+            writer.create_alert.assert_called()
+
+    def test_invalid_retry_result_uses_confirmed_rule_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            drive = MagicMock()
+            drive.list_images.return_value = []
+            worker = self._worker(tmp, writer, drive, llm_enabled=True)
+            image = Path(tmp) / "receipt.jpg"
+            image.write_bytes(b"image")
+            worker._llm_spool.enqueue(
+                "file-1", image, "店\n2026/06/28\nパン 100\n合計 100",
+                {
+                    "shopName": "店", "purchasedAt": "2026-06-28",
+                    "totalAmount": 100, "payer": "me", "status": "confirmed",
+                    "reviewReason": "reconciled", "difference": 0,
+                    "reconciledItems": [{
+                        "name": "パン", "amount": 100,
+                        "category": "食費", "confidence": 0.9,
+                    }],
+                },
+                [{"major": "食費", "minor": ["その他"]}],
+                "me", "gpt-5.6-luna",
+            )
+            primary = worker._llm_spool.acquire()
+            assert primary is not None
+            completed = worker._llm_spool.complete(primary, primary.meta, result_text="{}")
+            worker._llm_spool.retry_with_model(completed, "gpt-5.6-terra")
+            retry = worker._llm_spool.acquire()
+            assert retry is not None
+            worker._llm_spool.complete(retry, retry.meta, result_text="{}")
+
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "confirmed")
+            self.assertEqual(result["parseSource"], "rule_fallback")
+            writer.publish_llm_result.assert_called_once()
+            self.assertIsNone(worker._llm_spool.find("file-1"))
 
 
 if __name__ == "__main__":

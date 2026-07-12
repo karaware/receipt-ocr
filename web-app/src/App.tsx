@@ -3,11 +3,11 @@ import { onAuthStateChanged, signInWithPopup, signOut, type User } from "firebas
 import { auth, provider } from "./firebase";
 import {
   confirmReceipt, loadBudgets, loadCategories, loadMonth, loadReceiptItems,
-  loadReviewReceipts, removeTransaction, saveBudget, saveCategory,
+  loadReviewReceipts, loadSystemAlerts, removeTransaction, saveBudget, saveCategory,
   saveManualTransaction, updateReceiptDraft,
 } from "./data";
 import { summarize } from "./analytics";
-import type { Budget, Category, EntryType, Receipt, Transaction } from "./types";
+import type { Budget, Category, EntryType, Receipt, SystemAlert, Transaction } from "./types";
 
 type Page = "dashboard" | "transactions" | "review" | "budgets" | "categories";
 const yen = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 });
@@ -22,6 +22,7 @@ export default function App() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [reviews, setReviews] = useState<Receipt[]>([]);
+  const [systemAlerts, setSystemAlerts] = useState<SystemAlert[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -30,10 +31,10 @@ export default function App() {
     if (!user) return;
     setBusy(true); setError("");
     try {
-      const [nextTransactions, nextCategories, nextBudgets, nextReviews] = await Promise.all([
-        loadMonth(month), loadCategories(), loadBudgets(month), loadReviewReceipts(),
+      const [nextTransactions, nextCategories, nextBudgets, nextReviews, nextAlerts] = await Promise.all([
+        loadMonth(month), loadCategories(), loadBudgets(month), loadReviewReceipts(), loadSystemAlerts(),
       ]);
-      setTransactions(nextTransactions); setCategories(nextCategories); setBudgets(nextBudgets); setReviews(nextReviews);
+      setTransactions(nextTransactions); setCategories(nextCategories); setBudgets(nextBudgets); setReviews(nextReviews); setSystemAlerts(nextAlerts);
     } catch (reason) { setError(message(reason)); }
     finally { setBusy(false); }
   };
@@ -61,7 +62,7 @@ export default function App() {
       </header>
       {error && <div className="alert">{error}<button onClick={() => setError("")}>×</button></div>}
       {busy ? <div className="loading">読み込み中…</div> : <>
-        {page === "dashboard" && <Dashboard transactions={transactions} budgets={budgets} reviews={reviews.length} />}
+        {page === "dashboard" && <Dashboard transactions={transactions} budgets={budgets} reviews={reviews.length} alerts={systemAlerts} />}
         {page === "transactions" && <Transactions entries={transactions} categories={categories} onChanged={refresh} onError={setError} />}
         {page === "review" && <Review receipts={reviews} categories={categories} onChanged={refresh} onError={setError} />}
         {page === "budgets" && <Budgets month={month} budgets={budgets} categories={categories} transactions={transactions} onChanged={refresh} onError={setError} />}
@@ -85,11 +86,12 @@ function Nav({ active, onClick, icon, badge, children }: { active: boolean; onCl
   return <button className={active ? "active" : ""} onClick={onClick}><b>{icon}</b><span>{children}</span>{!!badge && <i>{badge}</i>}</button>;
 }
 
-function Dashboard({ transactions, budgets, reviews }: { transactions: Transaction[]; budgets: Budget[]; reviews: number }) {
+function Dashboard({ transactions, budgets, reviews, alerts }: { transactions: Transaction[]; budgets: Budget[]; reviews: number; alerts: SystemAlert[] }) {
   const data = summarize(transactions, budgets);
   const maxDay = Math.max(...Object.values(data.byDay), 1);
   const categoryRows = Object.entries(data.byCategory).sort((a, b) => b[1] - a[1]);
   return <div className="stack">
+    {alerts.length > 0 && <section className="panel system-alerts"><h2>システム警告</h2>{alerts.map((alert) => <article className={alert.severity} key={alert.id}><strong>{systemAlertLabel(alert.code)}</strong><span>{alert.message}</span>{alert.driveFileId && <small>対象: {alert.driveFileId}</small>}</article>)}</section>}
     {reviews > 0 && <div className="notice"><strong>{reviews}件のレシートが確認待ちです</strong><span>未確定データは集計に含まれていません。</span></div>}
     <section className="summary-grid">
       <Metric label="収入" value={data.income} tone="income" />
@@ -160,3 +162,4 @@ function Empty({ text = "表示するデータがありません" }: { text?: st
 function message(reason: unknown) { return reason instanceof Error ? reason.message : String(reason); }
 function pageTitle(page: Page) { return ({ dashboard: "ホーム", transactions: "取引一覧", review: "レシート確認", budgets: "予算", categories: "カテゴリ管理" })[page]; }
 function reasonLabel(reason: string) { return ({ initial_migration: "初回移行", missing_required: "必須項目不足", unexplained_difference: "差額あり", uncategorized: "未分類あり" } as Record<string, string>)[reason] ?? "要確認"; }
+function systemAlertLabel(code: string) { return ({ codex_auth_blocked: "Codex認証停止", codex_rate_limit_over_24h: "Codex利用上限", codex_worker_unavailable: "Codex worker停止", llm_exhausted: "自動解析できないレシート", spool_cleanup_failed: "一時データ削除失敗" } as Record<string, string>)[code] ?? "システム警告"; }

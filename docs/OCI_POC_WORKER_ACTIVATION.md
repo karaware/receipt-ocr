@@ -18,7 +18,8 @@ PoCワーカーを安全に稼働させるための手順を示す。
 7. dry-runでDrive接続だけを確認する
 8. テスト画像1枚を手動処理する
 9. 冪等性とVision利用数を確認する
-10. systemd timerを有効化する
+10. Codex CLIをChatGPTで認証し、LLM経路を確認する
+11. systemd timerを有効化する
 
 ## 事前条件
 
@@ -448,7 +449,7 @@ sudo -u receipt-ocr /bin/bash -c '
 | `needs_review` | OCRは完了したが確認が必要 |
 
 `invalid_source` は支払者をファイル名から取得できず、`POC_DEFAULT_PAYER` もない状態である。
-`failed` または `unknown_after_request` の場合はtimerを有効化せず、「11. 障害時の扱い」を確認する。
+`failed` または `unknown_after_request` の場合はtimerを有効化せず、「12. 障害時の扱い」を確認する。
 
 ## 9. Firestoreと重複防止の確認
 
@@ -496,20 +497,104 @@ sudo -u receipt-ocr /bin/bash -c '
 
 これで同一DriveファイルIDの重複処理が防止されていることを確認できる。
 
-## 10. timerを有効化する
+## 10. Codex CLIをChatGPTで認証し、LLM経路を確認する
 
-手順9まで合格した場合だけ実行する。
+この経路はOpenAI APIキーを使用しない。初回だけChatGPT Plusアカウントでdevice loginを行い、以後は
+永続化した `auth.json` をCodex自身が更新する。通常のレシート処理に人の操作は不要である。
+
+まず `/etc/receipt-ocr-poc/config.json` の `poc.llm.enabled` を `true` に変更する。APIキーを
+`config.env`、systemd unit、ユーザー環境へ設定しない。
+
+専用ユーザーでdevice loginを開始する。
 
 ```bash
-sudo systemctl enable --now receipt-ocr-poc.timer
+sudo -u receipt-ocr-codex env \
+  HOME=/var/lib/receipt-ocr-codex \
+  CODEX_HOME=/var/lib/receipt-ocr-codex/.codex \
+  /var/lib/receipt-ocr-codex/.local/bin/codex login --device-auth
+```
+
+表示されたURLとワンタイムコードを使って、ブラウザでChatGPT Plusアカウントへログインする。完了後、
+本文やtokenを表示せず認証方式と権限だけを確認する。
+
+```bash
+sudo chown receipt-ocr-codex:receipt-ocr-codex \
+  /var/lib/receipt-ocr-codex/.codex/auth.json
+sudo chmod 0600 /var/lib/receipt-ocr-codex/.codex/auth.json
+
+sudo -u receipt-ocr-codex jq '{
+  auth_mode,
+  has_refresh_token: ((.tokens.refresh_token // "") != ""),
+  last_refresh
+}' /var/lib/receipt-ocr-codex/.codex/auth.json
+```
+
+`auth_mode` が `chatgpt`、`has_refresh_token` が `true` であることを確認する。Google/Firebase鍵を
+Codexユーザーが読めないことも確認する。
+
+```bash
+sudo -u receipt-ocr-codex test \
+  ! -r /etc/receipt-ocr-poc/secrets/firestore.json
+sudo -u receipt-ocr-codex test \
+  ! -r /etc/receipt-ocr-poc/secrets/vision.json
+sudo -u receipt-ocr-codex test \
+  ! -r /etc/receipt-ocr-poc/secrets/drive.json
+```
+
+health checkを1回実行する。
+
+```bash
+sudo systemctl start receipt-ocr-llm-health.service
+sudo systemctl show receipt-ocr-llm-health.service \
+  --property=Result --property=ExecMainStatus
+```
+
+`Result=success`、`ExecMainStatus=0` が合格条件である。次にDriveへ新しいテスト画像を1枚置き、I/O worker、
+LLM worker、I/O workerの順で1回ずつ起動する。
+
+```bash
+sudo systemctl start receipt-ocr-poc.service
+sudo systemctl start receipt-ocr-llm.service
+sudo systemctl start receipt-ocr-poc.service
+```
+
+1回目のI/O workerはVision OCR後に `llm_pending` を作り、LLM workerが画像とOCRをCodexへ渡す。
+2回目のI/O workerが検算済み結果を正式な `receipts / transactions` へ登録する。Firestoreで次を確認する。
+
+- `poc_ocr_jobs/DRIVE_FILE_ID.status` が `confirmed` または `needs_review`
+- `receipts/DRIVE_FILE_ID.parseSource` が `codex` または `rule_fallback`
+- `transactions` に同じ `receiptId` の明細がある
+- `poc_receipts` にモデル、prompt/schema version、検証結果だけがあり、OCR全文と画像がない
+- `system_alerts` に認証・worker停止・最終保留の未解決原因が表示される
+
+Codexの認証が失効した場合は `codex_auth_blocked` がWeb家計簿へ表示される。通常処理は停止したままにし、
+この節のdevice loginを再実行する。APIキーへ切り替えない。
+
+参考:
+
+- [Codex非対話モード](https://learn.chatgpt.com/docs/non-interactive-mode)
+- [ヘッドレス認証](https://learn.chatgpt.com/docs/auth)
+- [ChatGPT管理認証の維持](https://learn.chatgpt.com/docs/auth/ci-cd-auth)
+
+## 11. timerを有効化する
+
+手順10まで合格した場合だけ実行する。
+
+```bash
+sudo systemctl enable --now \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
 
 sudo systemctl is-enabled receipt-ocr-poc.timer
 sudo systemctl is-active receipt-ocr-poc.timer
 sudo systemctl list-timers --all receipt-ocr-poc.timer
+sudo systemctl list-timers --all \
+  receipt-ocr-llm.timer receipt-ocr-llm-health.timer
 ```
 
-期待値は `enabled`、`active` と、次回実行時刻の表示である。timerは起動2分後、その後約5分間隔で
-`receipt-ocr-poc.service` を起動する。
+期待値は `enabled`、`active` と、次回実行時刻の表示である。I/O workerは約5分間隔、LLM workerは
+約1分間隔、認証health checkは週1回起動する。
 
 実行結果は次で確認する。
 
@@ -524,10 +609,13 @@ sudo systemctl show receipt-ocr-poc.service \
 timerを止める場合:
 
 ```bash
-sudo systemctl disable --now receipt-ocr-poc.timer
+sudo systemctl disable --now \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
 ```
 
-## 11. 障害時の扱い
+## 12. 障害時の扱い
 
 ### `failed`
 
@@ -566,3 +654,6 @@ sudo -u receipt-ocr /bin/bash -c '
 - 同じDriveファイルを再実行してもVision利用数が増えない
 - `poc_ocr_usage/_total.units` が20を超えない
 - timerが `enabled`、`active` である
+- Codex認証が `auth_mode: chatgpt` で、APIキーが配置されていない
+- `receipt-ocr-codex` ユーザーがGoogle/Firebase鍵を読めない
+- LLM timerと週次health timerが `enabled`、`active` である
