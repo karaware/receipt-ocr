@@ -806,14 +806,9 @@ echo "https://${PROJECT_ID}.web.app"
 ## 14. 既存VMをPython 3.11へ更新する
 
 Python 3.9はEOL警告が出るため、稼働中venvを直接変更せず、Python 3.11のvenvを別名で作成してから
-切り替える。まずtimerを停止し、必要パッケージを導入する。
+切り替える。新venvの準備中は既存timerを稼働させたままでよい。
 
 ```bash
-sudo systemctl disable --now \
-  receipt-ocr-poc.timer \
-  receipt-ocr-llm.timer \
-  receipt-ocr-llm-health.timer
-
 sudo dnf -y install \
   python3.11 \
   python3.11-devel \
@@ -843,10 +838,15 @@ sudo -u receipt-ocr \
   -s /opt/receipt-ocr/tests
 ```
 
-テスト成功後、旧venvをバックアップして新venvへ切り替える。systemdのパスは `.venv` のままなので
-unitファイルの変更は不要である。
+テスト成功後にtimerを停止し、旧venvをバックアップして新venvへ切り替える。systemdのパスは
+`.venv` のままなのでunitファイルの変更は不要である。
 
 ```bash
+sudo systemctl disable --now \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
+
 sudo mv /opt/receipt-ocr/.venv \
   /opt/receipt-ocr/.venv-py39-backup
 sudo mv /opt/receipt-ocr/.venv-py311 \
