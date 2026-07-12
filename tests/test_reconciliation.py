@@ -15,6 +15,23 @@ class ReconciliationTest(unittest.TestCase):
         self.assertEqual(result.status, "confirmed")
         self.assertEqual(result.items[-1].amount, -10)
 
+    def test_yen_off_discount_is_added(self):
+        result = reconcile_receipt(
+            "店",
+            "2026-06-20",
+            920,
+            [
+                ReceiptItem("かけ(大)", 630, "食費", 0.9),
+                ReceiptItem("かしわ天", 220, "食費", 0.9),
+                ReceiptItem("鮭おむすび", 170, "食費", 0.9),
+            ],
+            "5枚天ぷら●100円引 -¥100",
+        )
+        self.assertEqual(result.status, "confirmed")
+        self.assertEqual(result.reason, "reconciled")
+        self.assertEqual(result.items[-1].name, "値引き・クーポン")
+        self.assertEqual(result.items[-1].amount, -100)
+
     def test_small_unknown_difference_is_rounded(self):
         result = reconcile_receipt("店", "2026-06-20", 299, [ReceiptItem("パン", 300, "食費", 0.9)], "")
         self.assertEqual(result.status, "confirmed")

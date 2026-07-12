@@ -80,7 +80,7 @@ def _find_explained_adjustments(text: str, target: int) -> List[ReceiptItem]:
 
 
 def _adjustment_kind(line: str) -> Optional[tuple[str, int]]:
-    if any(word in line for word in ("値引", "割引", "クーポン")):
+    if any(word in line for word in ("値引", "割引", "クーポン", "円引")):
         return "値引き・クーポン", -1
     if any(word in line for word in ("ポイント利用", "ポイント充当", "ポイント値引")):
         return "ポイント利用", -1
