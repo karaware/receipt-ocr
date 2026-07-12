@@ -79,7 +79,7 @@ class CloudWorker:
             job = self._writer.get_job(image.file_id)
             if job:
                 status = job.get("status")
-                if status in {"completed", "needs_review", "vision_reserved", "unknown_after_request"}:
+                if status in {"completed", "confirmed", "needs_review", "vision_reserved", "unknown_after_request"}:
                     continue
                 if status == "failed" and job.get("visionAttempted", False):
                     continue
@@ -118,6 +118,9 @@ class CloudWorker:
                 "payer": payer,
                 "status": reconciled.status,
                 "reviewReason": reconciled.reason,
+                "difference": reconciled.difference,
+                "parsedItems": [_item_payload(item) for item in parsed.items],
+                "reconciledItems": [_item_payload(item) for item in reconciled.items],
             }
             self._writer.complete(image.file_id, result)
             return {"status": reconciled.status, "driveFileId": image.file_id}
@@ -144,3 +147,12 @@ def create_worker(config: Mapping[str, Any]) -> CloudWorker:
             settings.max_vision_units,
         ),
     )
+
+
+def _item_payload(item: Any) -> dict[str, Any]:
+    return {
+        "name": item.name,
+        "amount": item.amount,
+        "category": item.category,
+        "confidence": item.confidence,
+    }

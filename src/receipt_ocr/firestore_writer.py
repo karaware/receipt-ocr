@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-TERMINAL_STATUSES = {"completed", "needs_review", "unknown_after_request"}
+TERMINAL_STATUSES = {"completed", "confirmed", "needs_review", "unknown_after_request"}
 
 
 @dataclass(frozen=True)

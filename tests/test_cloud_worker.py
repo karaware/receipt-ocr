@@ -28,6 +28,15 @@ class CloudWorkerTest(unittest.TestCase):
             worker._drive.download.assert_not_called()
             worker._vision.document_text.assert_not_called()
 
+    def test_confirmed_file_is_not_downloaded_or_ocrd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            writer.get_job.return_value = {"status": "confirmed"}
+            worker = self._worker(tmp, writer)
+            self.assertEqual(worker.run_once(), {"status": "idle"})
+            worker._drive.download.assert_not_called()
+            worker._vision.document_text.assert_not_called()
+
     def test_processes_one_file_and_does_not_store_ocr_text(self):
         with tempfile.TemporaryDirectory() as tmp:
             writer = MagicMock()
@@ -42,7 +51,12 @@ class CloudWorkerTest(unittest.TestCase):
             self.assertEqual(result["driveFileId"], "file-1")
             payload = writer.complete.call_args.args[1]
             self.assertNotIn("ocrText", payload)
-            self.assertNotIn("items", payload)
+            self.assertEqual(payload["difference"], 0)
+            self.assertEqual(
+                payload["parsedItems"],
+                [{"name": "パン", "amount": 100, "category": "食費", "confidence": 0.9}],
+            )
+            self.assertEqual(payload["parsedItems"], payload["reconciledItems"])
             self.assertFalse((Path(tmp) / "file-1.jpg").exists())
 
     def test_dry_run_does_not_reserve(self):
