@@ -66,6 +66,13 @@ class LlmContractTest(unittest.TestCase):
             validate_result(invalid, self.request, today=date(2026, 7, 12))
         self.assertIn("items[0]_category", raised.exception.errors)
 
+    def test_rejects_zero_amount_in_application_validation(self):
+        invalid = copy.deepcopy(self.result)
+        invalid["items"][0]["amount"] = 0
+        with self.assertRaises(LlmValidationError) as raised:
+            validate_result(invalid, self.request, today=date(2026, 7, 12))
+        self.assertIn("items[0]_amount", raised.exception.errors)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,7 +66,7 @@
       "required": ["name", "amount", "kind", "majorCategory", "minorCategory", "confidence", "evidenceLineNumbers"],
       "properties": {
         "name": {"type": "string", "minLength": 1, "maxLength": 120},
-        "amount": {"type": "integer", "minimum": -1000000, "maximum": 1000000, "not": {"const": 0}},
+        "amount": {"type": "integer", "minimum": -1000000, "maximum": 1000000},
         "kind": {"type": "string", "enum": ["product", "discount", "tax", "fee", "rounding"]},
         "majorCategory": {"type": "string", "minLength": 1, "maxLength": 80},
         "minorCategory": {"type": "string", "minLength": 1, "maxLength": 80},

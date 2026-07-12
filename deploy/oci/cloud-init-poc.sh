@@ -136,7 +136,7 @@ sudo -u "${CODEX_USER}" env \
   HOME="${CODEX_STATE_DIR}" \
   CODEX_HOME="${CODEX_STATE_DIR}/.codex" \
   CODEX_NON_INTERACTIVE=1 \
-  /bin/bash -c 'curl -fsSL https://chatgpt.com/codex/install.sh | sh'
+  /bin/bash -c 'cd "$HOME" && curl -fsSL https://chatgpt.com/codex/install.sh | sh'
 
 install -o root -g "${APP_GROUP}" -m 0640 \
   "${APP_DIR}/deploy/oci/config.example.env" \
