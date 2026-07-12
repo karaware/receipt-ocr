@@ -142,6 +142,33 @@ T9120002000408
         self.assertEqual(receipt.total_amount, 1296)
         self.assertNotEqual(receipt.total_amount, 600)
 
+    def test_parse_marugame_receipt_ignores_change_as_total(self):
+        text = """1
+株式会社丸亀製麺
+<領収書>
+丸亀製麺 イオンモール鶴見緑地
+登録番号:T3140001101540
+TEL:06-6915-5634
+2026/05/13 11:26 担:11
+かけ(大) ¥630
+かしわ天 ¥220
+鮭おむすび ¥170
+小計 3点 ¥1,020
+5枚天ぷら●100円引 -¥100
+合 計 ¥920
+(内)消費税等 ¥83)
+(10%対象税込計 ¥920)
+(内)消費税等 ¥83)
+SCクレジット支払 ¥920
+お釣り ¥10
+"""
+        receipt = parse_receipt(text, CONFIG)
+
+        self.assertEqual(receipt.shop_name, "株式会社丸亀製麺")
+        self.assertEqual(receipt.purchased_at, "2026-05-13")
+        self.assertEqual(receipt.total_amount, 920)
+        self.assertNotEqual(receipt.total_amount, 10)
+
 
 if __name__ == "__main__":
     unittest.main()

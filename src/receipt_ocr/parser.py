@@ -34,6 +34,20 @@ SHOP_NAME_SKIP_KEYWORDS = [
     "御菓子",
     "菓子司",
 ]
+TOTAL_EXCLUDE_KEYWORDS = [
+    "小計",
+    "内消費税",
+    "消費税",
+    "対象",
+    "税込計",
+    "お預り",
+    "預り",
+    "現金",
+    "クレジット",
+    "支払",
+    "お釣",
+    "釣銭",
+]
 META_KEYWORDS = [
     "TEL",
     "電話",
@@ -87,6 +101,8 @@ MAX_REASONABLE_AMOUNT = 1_000_000
 DEFAULT_TOTAL_KEYWORDS = [
     "合計",
     "合言十",
+    "合 計",
+    "会計",
     "税込",
     "日計金額",
     "合計金額",
@@ -138,6 +154,8 @@ def _guess_shop_name(lines: Iterable[str], ignore_keywords: List[str]) -> str:
             continue
         if _date_from_line(line) is not None:
             continue
+        if not _looks_like_item_name(line):
+            continue
         return line[:80]
     return ""
 
@@ -182,6 +200,8 @@ def _guess_total(lines: Iterable[str], total_keywords: List[str]) -> Optional[in
             continue
         if _is_meta_line(line):
             continue
+        if _is_total_excluded_line(line):
+            continue
         if any(keyword in line for keyword in total_keywords):
             base_score = 30
         else:
@@ -200,6 +220,10 @@ def _guess_total(lines: Iterable[str], total_keywords: List[str]) -> Optional[in
         return None
     candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return candidates[0][1]
+
+
+def _is_total_excluded_line(line: str) -> bool:
+    return any(keyword in line for keyword in TOTAL_EXCLUDE_KEYWORDS)
 
 
 def _guess_items(
