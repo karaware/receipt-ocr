@@ -20,20 +20,20 @@ class Reservation:
 
 
 def reservation_decision(
-    job: Mapping[str, Any], usage_count: int, max_units: int
+    job: Mapping[str, Any], monthly_usage_count: int, max_monthly_units: int
 ) -> tuple[Reservation, bool]:
-    """Return the atomic reservation result and whether usage must increase."""
+    """Return the monthly reservation result and whether usage must increase."""
     status = job.get("status")
     if status in TERMINAL_STATUSES or status == "vision_reserved":
         return Reservation(False, str(status)), False
     reuse = status == "failed" and not job.get("visionAttempted", False)
-    if not reuse and usage_count >= max_units:
+    if not reuse and monthly_usage_count >= max_monthly_units:
         return Reservation(False, "limit_reached"), False
     return Reservation(True, "reserved"), not reuse
 
 
 class FirestoreWriter:
-    def __init__(self, db: Any, household_id: str, max_units: int = 20) -> None:
+    def __init__(self, db: Any, household_id: str, max_units: int = 800) -> None:
         self._db = db
         self._base = db.collection("households").document(household_id)
         self._max_units = max_units
@@ -62,7 +62,9 @@ class FirestoreWriter:
             total_snapshot = total_ref.get(transaction=transaction)
             month_count = int((month_snapshot.to_dict() or {}).get("units", 0)) if month_snapshot.exists else 0
             total_count = int((total_snapshot.to_dict() or {}).get("units", 0)) if total_snapshot.exists else 0
-            decision, increment = reservation_decision(job, total_count, self._max_units)
+            # Google Cloud Vision's free allocation is monthly.  Keep _total as
+            # lifetime telemetry, but only the YYYY-MM document gates new OCR.
+            decision, increment = reservation_decision(job, month_count, self._max_units)
             if not decision.reserved:
                 return decision
 
@@ -259,7 +261,7 @@ class FirestoreWriter:
         return self._base.collection("poc_ocr_usage")
 
 
-def create_firestore_writer(credential_path: str, household_id: str, max_units: int = 20) -> FirestoreWriter:
+def create_firestore_writer(credential_path: str, household_id: str, max_units: int = 800) -> FirestoreWriter:
     try:
         import firebase_admin
         from firebase_admin import credentials, firestore

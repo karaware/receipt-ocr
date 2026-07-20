@@ -8,11 +8,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.*
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val settings get() = ReceiptApplication.from(this).settings
@@ -86,13 +90,22 @@ class MainActivity : ComponentActivity() {
             showConfigurationError("フォルダIDを取得できませんでした。receipt-inboxを選択して「挿入」を押してください")
             return
         }
-        settings.payer = payerBeingConfigured.ifBlank { settings.payer }
-        if (account.isNotBlank()) settings.accountName = account
-        settings.folderId = folderId
-        settings.folderName = "receipt-inbox"
-        configurationRevision++
-        Toast.makeText(this, "receipt-inboxを設定しました", Toast.LENGTH_SHORT).show()
-        UploadWorker.enqueue(this, replace = true)
+        val accessToken = result.accessToken.orEmpty()
+        lifecycleScope.launch {
+            val folderName = withContext(Dispatchers.IO) {
+                runCatching {
+                    val token = accessToken.ifBlank { DriveAccess.silentToken(applicationContext, account) }
+                    token?.let { DriveFolderResolver(it).name(folderId) }
+                }.getOrNull()
+            } ?: AppSettings.UNKNOWN_FOLDER_NAME
+            settings.payer = payerBeingConfigured.ifBlank { settings.payer }
+            if (account.isNotBlank()) settings.accountName = account
+            settings.folderId = folderId
+            settings.folderName = folderName
+            configurationRevision++
+            Toast.makeText(this@MainActivity, "${folderName}を設定しました", Toast.LENGTH_SHORT).show()
+            UploadWorker.enqueue(this@MainActivity, replace = true)
+        }
     }
 
     private fun showConfigurationError(message: String, error: Throwable? = null) {

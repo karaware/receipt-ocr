@@ -29,7 +29,8 @@
     "vision_service_account_path": "/etc/receipt-ocr-poc/secrets/vision.json",
     "firestore_service_account_path": "/etc/receipt-ocr-poc/secrets/firestore.json",
     "work_dir": "/var/lib/receipt-ocr-poc/work",
-    "max_vision_units": 20,
+    "max_vision_units": 800,
+    "max_images_per_run": 4,
     "llm": {
       "enabled": false,
       "spool_dir": "/var/lib/receipt-ocr-poc/llm-spool",

@@ -4,21 +4,27 @@ from receipt_ocr.firestore_writer import reservation_decision
 
 
 class ReservationDecisionTest(unittest.TestCase):
-    def test_stops_at_limit(self):
-        decision, increment = reservation_decision({}, 20, 20)
+    def test_stops_at_monthly_limit(self):
+        decision, increment = reservation_decision({}, 800, 800)
         self.assertFalse(decision.reserved)
         self.assertEqual(decision.reason, "limit_reached")
         self.assertFalse(increment)
 
+    def test_new_month_has_a_fresh_allowance_even_when_lifetime_usage_is_high(self):
+        # The caller supplies the YYYY-MM counter, not the _total telemetry value.
+        decision, increment = reservation_decision({}, 0, 800)
+        self.assertTrue(decision.reserved)
+        self.assertTrue(increment)
+
     def test_terminal_and_reserved_jobs_are_idempotent(self):
         for status in ("completed", "needs_review", "unknown_after_request", "vision_reserved"):
-            decision, increment = reservation_decision({"status": status}, 0, 20)
+            decision, increment = reservation_decision({"status": status}, 0, 800)
             self.assertFalse(decision.reserved)
             self.assertFalse(increment)
 
     def test_pre_request_failure_reuses_reservation(self):
         decision, increment = reservation_decision(
-            {"status": "failed", "visionAttempted": False}, 20, 20
+            {"status": "failed", "visionAttempted": False}, 800, 800
         )
         self.assertTrue(decision.reserved)
         self.assertFalse(increment)

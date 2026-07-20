@@ -20,8 +20,9 @@ class CloudWorkerTest(unittest.TestCase):
                 "spool_dir": str(Path(tmp) / "llm-spool"),
             }},
         }
-        drive = drive or MagicMock()
-        drive.list_images.return_value = [DriveImage("file-1", "receipt.jpg", "image/jpeg", 1)]
+        if drive is None:
+            drive = MagicMock()
+            drive.list_images.return_value = [DriveImage("file-1", "receipt.jpg", "image/jpeg", 1)]
         return CloudWorker(config, settings, drive, vision or MagicMock(), writer)
 
     def test_completed_file_is_not_downloaded_or_ocrd(self):
@@ -63,6 +64,49 @@ class CloudWorkerTest(unittest.TestCase):
             )
             self.assertEqual(payload["parsedItems"], payload["reconciledItems"])
             self.assertFalse((Path(tmp) / "file-1.jpg").exists())
+
+    def test_processes_a_camera_batch_in_one_timer_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            writer.get_job.return_value = None
+            writer.reserve.return_value = MagicMock(reserved=True, reason="reserved")
+            drive = MagicMock()
+            drive.list_images.return_value = [
+                DriveImage(f"file-{index}", f"receipt-{index}.jpg", "image/jpeg", None)
+                for index in range(1, 5)
+            ]
+            drive.download.side_effect = lambda image, target: Path(target).write_bytes(b"x")
+            vision = MagicMock()
+            vision.document_text.return_value = "店\n2026/06/28\nパン 100\n合計 100"
+
+            result = self._worker(tmp, writer, drive, vision).run_once()
+
+            self.assertEqual(result["status"], "batch_completed")
+            self.assertEqual(result["count"], 4)
+            self.assertEqual(len(result["processed"]), 4)
+            self.assertEqual(writer.reserve.call_count, 4)
+            self.assertEqual(writer.complete.call_count, 4)
+
+    def test_finalizes_all_completed_llm_results_before_processing_new_images(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MagicMock()
+            drive = MagicMock()
+            drive.list_images.return_value = []
+            worker = self._worker(tmp, writer, drive, llm_enabled=True)
+            worker._finalize_llm_result = MagicMock(side_effect=[
+                {"status": "confirmed", "driveFileId": "file-1"},
+                {"status": "needs_review", "driveFileId": "file-2"},
+                None,
+            ])
+
+            result = worker.run_once()
+
+            self.assertEqual(result["status"], "batch_completed")
+            self.assertEqual(result["finalized"], [
+                {"status": "confirmed", "driveFileId": "file-1"},
+                {"status": "needs_review", "driveFileId": "file-2"},
+            ])
+            self.assertEqual(result["processed"], [])
 
     def test_dry_run_does_not_reserve(self):
         with tempfile.TemporaryDirectory() as tmp:

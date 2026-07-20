@@ -1,5 +1,5 @@
 import {
-  addDoc, collection, deleteDoc, doc, getDocs, orderBy, query,
+  addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query,
   serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
 import { db, householdId } from "./firebase";
@@ -38,6 +38,26 @@ export async function loadSystemAlerts(): Promise<SystemAlert[]> {
 
 export async function loadReceiptItems(receiptId: string): Promise<Transaction[]> {
   return values<Transaction>(await getDocs(query(sub("transactions"), where("receiptId", "==", receiptId))));
+}
+
+/** Removes an unconfirmed OCR receipt and every record derived from it atomically. */
+export async function removeReviewReceipt(receiptId: string): Promise<void> {
+  const receiptRef = doc(sub("receipts"), receiptId);
+  const receipt = await getDoc(receiptRef);
+  if (!receipt.exists()) throw new Error("レシートが見つかりません");
+  if (receipt.data().status !== "needs_review") throw new Error("確定済みレシートは削除できません");
+
+  const [transactions, alerts] = await Promise.all([
+    getDocs(query(sub("transactions"), where("receiptId", "==", receiptId))),
+    getDocs(query(sub("system_alerts"), where("driveFileId", "==", receiptId))),
+  ]);
+  const batch = writeBatch(db);
+  transactions.docs.forEach((item) => batch.delete(item.ref));
+  alerts.docs
+    .filter((alert) => alert.data().resolvedAt == null)
+    .forEach((alert) => batch.update(alert.ref, { resolvedAt: serverTimestamp() }));
+  batch.delete(receiptRef);
+  await batch.commit();
 }
 
 export async function saveManualTransaction(value: Omit<Transaction, "id" | "source" | "receiptStatus">, id?: string): Promise<void> {

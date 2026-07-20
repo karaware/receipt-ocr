@@ -22,6 +22,12 @@ from .reconciliation import reconcile_receipt
 from .source_metadata import resolve_payer
 from .vision_client import VisionClient, VisionRequestIndeterminate
 
+NON_PROCESSABLE_JOB_STATUSES = {
+    "completed", "confirmed", "needs_review", "vision_reserved",
+    "unknown_after_request", "llm_pending", "llm_running",
+    "llm_retry_wait", "llm_completed", "auth_blocked",
+}
+
 
 @dataclass(frozen=True)
 class PocSettings:
@@ -31,8 +37,9 @@ class PocSettings:
     vision_credential_path: str
     firestore_credential_path: str
     work_dir: Path
-    max_vision_units: int = 20
+    max_vision_units: int = 800
     default_payer: str | None = None
+    max_images_per_run: int = 4
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "PocSettings":
@@ -50,9 +57,12 @@ class PocSettings:
         firestore_credential = os.environ.get("POC_FIRESTORE_SERVICE_ACCOUNT_PATH") or poc.get("firestore_service_account_path") or shared
         if not all((drive_credential, vision_credential, firestore_credential)):
             raise ValueError("PoC service account paths are required")
-        max_units = int(os.environ.get("POC_MAX_VISION_UNITS", poc.get("max_vision_units", 20)))
-        if not 1 <= max_units <= 20:
-            raise ValueError("POC_MAX_VISION_UNITS must be between 1 and 20")
+        max_units = int(os.environ.get("POC_MAX_VISION_UNITS", poc.get("max_vision_units", 800)))
+        if not 1 <= max_units <= 1000:
+            raise ValueError("POC_MAX_VISION_UNITS must be between 1 and 1000")
+        max_images_per_run = int(os.environ.get("POC_MAX_IMAGES_PER_RUN", poc.get("max_images_per_run", 4)))
+        if not 1 <= max_images_per_run <= 10:
+            raise ValueError("POC_MAX_IMAGES_PER_RUN must be between 1 and 10")
         return cls(
             drive_folder_id=required("POC_DRIVE_FOLDER_ID", "drive_folder_id"),
             household_id=required("POC_HOUSEHOLD_ID", "household_id"),
@@ -62,6 +72,7 @@ class PocSettings:
             work_dir=Path(os.environ.get("POC_WORK_DIR", poc.get("work_dir", "/var/lib/receipt-ocr-poc/work"))).expanduser(),
             max_vision_units=max_units,
             default_payer=os.environ.get("POC_DEFAULT_PAYER") or poc.get("default_payer"),
+            max_images_per_run=max_images_per_run,
         )
 
 
@@ -88,29 +99,43 @@ class CloudWorker:
         return self._drive.list_images(self._settings.drive_folder_id)
 
     def run_once(self, dry_run: bool = False) -> dict[str, Any]:
+        """Advance up to ``max_images_per_run`` receipts during one timer run.
+
+        The LLM worker remains intentionally serial, but this worker can enqueue a
+        small camera batch in one pass and publish every completed LLM result on
+        the next pass.  This avoids adding one five-minute timer interval per
+        photo while retaining a bounded Vision request count and runtime.
+        """
+        if dry_run:
+            return self._dry_run_candidate()
+
+        finalized: list[dict[str, Any]] = []
         if self._llm_settings.enabled and not dry_run:
             health_status = self._sync_llm_health()
             self._sync_llm_job_states()
-            finalized = self._finalize_llm_result()
-            if finalized:
-                return finalized
             if health_status == "auth_blocked":
                 return {"status": "auth_blocked"}
+            for _ in range(self._settings.max_images_per_run):
+                result = self._finalize_llm_result()
+                if result is None:
+                    break
+                finalized.append(result)
+
+        processed: list[dict[str, Any]] = []
         for image in self.candidates():
             job = self._writer.get_job(image.file_id)
-            if job:
-                status = job.get("status")
-                if status in {
-                    "completed", "confirmed", "needs_review", "vision_reserved",
-                    "unknown_after_request", "llm_pending", "llm_running",
-                    "llm_retry_wait", "llm_completed", "auth_blocked",
-                }:
-                    continue
-                if status == "failed" and job.get("visionAttempted", False):
-                    continue
-            if dry_run:
+            if not _is_processable_job(job):
+                continue
+            processed.append(self._process(image))
+            if len(processed) >= self._settings.max_images_per_run:
+                break
+        return _batch_result(finalized, processed)
+
+    def _dry_run_candidate(self) -> dict[str, Any]:
+        for image in self.candidates():
+            job = self._writer.get_job(image.file_id)
+            if _is_processable_job(job):
                 return {"status": "candidate", "driveFileId": image.file_id, "sourceName": image.name}
-            return self._process(image)
         return {"status": "idle"}
 
     def _sync_llm_health(self) -> str | None:
@@ -440,6 +465,31 @@ def create_worker(config: Mapping[str, Any]) -> CloudWorker:
         llm_settings,
         LlmSpool(llm_settings.spool_dir),
     )
+
+
+def _is_processable_job(job: Mapping[str, Any] | None) -> bool:
+    if not job:
+        return True
+    status = job.get("status")
+    return status not in NON_PROCESSABLE_JOB_STATUSES and not (
+        status == "failed" and job.get("visionAttempted", False)
+    )
+
+
+def _batch_result(
+    finalized: list[dict[str, Any]], processed: list[dict[str, Any]]
+) -> dict[str, Any]:
+    results = finalized + processed
+    if not results:
+        return {"status": "idle"}
+    if len(results) == 1:
+        return results[0]
+    return {
+        "status": "batch_completed",
+        "finalized": finalized,
+        "processed": processed,
+        "count": len(results),
+    }
 
 
 def _item_payload(item: Any) -> dict[str, Any]:

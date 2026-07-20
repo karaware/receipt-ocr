@@ -628,7 +628,7 @@ receipt-ocr llm-worker health-check
 receipt-ocr llm-worker cleanup
 ```
 
-`cloud-worker --once` は先にcompleted LLM jobをfinalizeし、その後に新規Drive画像を1件だけenqueueする。
+`cloud-worker --once` は先にcompleted LLM jobを最大4件finalizeし、その後に新規Drive画像を最大4件enqueueする。件数は `poc.max_images_per_run`（既定4）で変更できる。
 
 ## 18. systemd
 

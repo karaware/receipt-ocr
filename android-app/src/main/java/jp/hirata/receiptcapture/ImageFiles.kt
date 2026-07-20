@@ -56,6 +56,9 @@ object ImageFiles {
 
     fun stitchOrdered(sources: List<File>, target: File) {
         require(sources.isNotEmpty())
+        target.parentFile?.let { parent ->
+            check(parent.exists() || parent.mkdirs()) { "出力フォルダを作成できません: ${parent.path}" }
+        }
         val dimensions = sources.map { file ->
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, options)
