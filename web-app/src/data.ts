@@ -7,6 +7,7 @@ import type { Budget, Category, Receipt, SystemAlert, Transaction } from "./type
 
 const root = () => doc(db, "households", householdId);
 const sub = (name: string) => collection(root(), name);
+export const adjustmentMinorCategory = "値引き・税・手数料";
 const values = <T>(snapshot: Awaited<ReturnType<typeof getDocs>>): T[] =>
   snapshot.docs.map((item) => Object.assign({ id: item.id }, item.data()) as T);
 
@@ -20,7 +21,9 @@ export async function loadMonth(month: string): Promise<Transaction[]> {
 }
 
 export async function loadCategories(): Promise<Category[]> {
-  return values<Category>(await getDocs(sub("categories")));
+  return values<Category>(await getDocs(sub("categories"))).map((category) => category.type === "expense"
+    ? { ...category, subcategories: [...new Set([...category.subcategories, adjustmentMinorCategory])] }
+    : category);
 }
 
 export async function loadBudgets(month: string): Promise<Budget[]> {
@@ -75,7 +78,10 @@ export async function saveBudget(month: string, category: string, amount: number
 }
 
 export async function saveCategory(category: Category): Promise<void> {
-  await setDoc(doc(sub("categories"), category.id), category, { merge: true });
+  const subcategories = category.type === "expense"
+    ? [...new Set([...category.subcategories, adjustmentMinorCategory])]
+    : category.subcategories;
+  await setDoc(doc(sub("categories"), category.id), { ...category, subcategories }, { merge: true });
 }
 
 export function normalizeItemName(value: string): string {
@@ -101,7 +107,7 @@ export async function confirmReceipt(receipt: Receipt, items: Transaction[]): Pr
     const { id, ...payload } = item;
     const itemRef = id.startsWith("new-") ? doc(sub("transactions")) : doc(sub("transactions"), id);
     batch.set(itemRef, { ...payload, receiptId: receipt.id, source: "ocr", receiptStatus: "confirmed", createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
-    if (item.itemName && item.majorCategory !== "調整") {
+    if (item.itemName && item.majorCategory !== "調整" && item.minorCategory !== adjustmentMinorCategory) {
       const normalized = normalizeItemName(item.itemName);
       batch.set(doc(sub("category_rules"), encodeURIComponent(normalized)), { normalized_name: normalized, category: item.majorCategory, minorCategory: item.minorCategory, updatedAt: serverTimestamp() });
     }

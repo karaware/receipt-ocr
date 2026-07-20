@@ -39,7 +39,7 @@ class LlmContractTest(unittest.TestCase):
             "丸亀製麺\n2026/05/13\nかけ(大) 630\n値引 -100\n合計 530",
             {"shopName": "丸亀製麺", "purchasedAt": "2026-05-13", "totalAmount": 530},
             [
-                {"major": "食費", "minor": ["外食"]},
+                {"major": "食費", "minor": ["外食", "値引き・税・手数料"]},
                 {"major": "調整", "minor": ["値引き・税", "端数"]},
             ],
             "a" * 64,
@@ -53,7 +53,7 @@ class LlmContractTest(unittest.TestCase):
             "totalAmount": {"value": 530, "confidence": "high", "evidenceLineNumbers": [5]},
             "items": [
                 {"name": "かけ(大)", "amount": 630, "kind": "product", "majorCategory": "食費", "minorCategory": "外食", "confidence": "high", "evidenceLineNumbers": [3]},
-                {"name": "値引", "amount": -100, "kind": "discount", "majorCategory": "調整", "minorCategory": "値引き・税", "confidence": "high", "evidenceLineNumbers": [4]},
+                {"name": "値引", "amount": -100, "kind": "discount", "majorCategory": "食費", "minorCategory": "値引き・税・手数料", "confidence": "high", "evidenceLineNumbers": [4]},
             ],
             "warnings": [],
         }
@@ -94,6 +94,14 @@ class LlmContractTest(unittest.TestCase):
         with self.assertRaises(LlmValidationError) as raised:
             validate_result(invalid, self.request, today=date(2026, 7, 12))
         self.assertIn("items[0]_amount", raised.exception.errors)
+
+    def test_rejects_adjustment_outside_the_dominant_product_category(self):
+        invalid = copy.deepcopy(self.result)
+        invalid["items"][1]["majorCategory"] = "調整"
+        invalid["items"][1]["minorCategory"] = "値引き・税"
+        with self.assertRaises(LlmValidationError) as raised:
+            validate_result(invalid, self.request, today=date(2026, 7, 12))
+        self.assertIn("items[1]_adjustment_category", raised.exception.errors)
 
 
 if __name__ == "__main__":

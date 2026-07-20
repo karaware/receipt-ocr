@@ -11,6 +11,7 @@ TERMINAL_STATUSES = {
     "completed", "confirmed", "needs_review", "unknown_after_request",
     "llm_pending", "llm_running", "llm_retry_wait", "llm_completed", "auth_blocked",
 }
+ADJUSTMENT_MINOR_CATEGORY = "値引き・税・手数料"
 
 
 @dataclass(frozen=True)
@@ -116,9 +117,14 @@ class FirestoreWriter:
             if data.get("type") != "expense" or not data.get("name"):
                 continue
             minors = [str(value) for value in data.get("subcategories", []) if value]
+            if ADJUSTMENT_MINOR_CATEGORY not in minors:
+                minors.append(ADJUSTMENT_MINOR_CATEGORY)
+                # Keep Firestore's category definition and the web UI in sync with
+                # the categories used by the OCR worker, including user-created ones.
+                document.reference.set({"subcategories": minors}, merge=True)
             values.append({"major": str(data["name"]), "minor": minors or ["その他"]})
         if not any(value["major"] == "調整" for value in values):
-            values.append({"major": "調整", "minor": ["値引き・税", "端数", "その他"]})
+            values.append({"major": "調整", "minor": ["値引き・税", "端数", "その他", ADJUSTMENT_MINOR_CATEGORY]})
         if not any(value["major"] == "その他" for value in values):
             values.append({"major": "その他", "minor": ["未分類", "その他"]})
         return sorted(values, key=lambda value: str(value["major"]))

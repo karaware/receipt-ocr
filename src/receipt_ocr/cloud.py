@@ -15,11 +15,11 @@ from .reconciliation import reconcile_receipt
 
 DEFAULT_CATEGORY_SEED = [
     {"id": "income", "name": "収入", "type": "income", "subcategories": ["給与", "賞与", "その他"]},
-    {"id": "food", "name": "食費", "type": "expense", "subcategories": ["食料品", "外食", "飲料", "その他"]},
-    {"id": "daily", "name": "日用品", "type": "expense", "subcategories": ["生活用品", "衛生用品", "その他"]},
-    {"id": "consumables", "name": "消耗品", "type": "expense", "subcategories": ["消耗品", "その他"]},
-    {"id": "adjustment", "name": "調整", "type": "expense", "subcategories": ["値引き・税", "端数", "その他"]},
-    {"id": "other", "name": "その他", "type": "expense", "subcategories": ["未分類", "その他"]},
+    {"id": "food", "name": "食費", "type": "expense", "subcategories": ["食料品", "外食", "飲料", "その他", "値引き・税・手数料"]},
+    {"id": "daily", "name": "日用品", "type": "expense", "subcategories": ["生活用品", "衛生用品", "その他", "値引き・税・手数料"]},
+    {"id": "consumables", "name": "消耗品", "type": "expense", "subcategories": ["消耗品", "その他", "値引き・税・手数料"]},
+    {"id": "adjustment", "name": "調整", "type": "expense", "subcategories": ["値引き・税", "端数", "その他", "値引き・税・手数料"]},
+    {"id": "other", "name": "その他", "type": "expense", "subcategories": ["未分類", "その他", "値引き・税・手数料"]},
 ]
 
 

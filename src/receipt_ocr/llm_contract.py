@@ -11,12 +11,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 INPUT_SCHEMA_VERSION = "receipt-llm-input/v1"
 RESULT_SCHEMA_VERSION = "receipt-llm-result/v1"
-PROMPT_VERSION = "receipt-parser/1"
+PROMPT_VERSION = "receipt-parser/2"
 MAX_AMOUNT = 1_000_000
 MAX_ITEMS = 200
 CONFIDENCE = {"high", "medium", "low"}
 KINDS = {"product", "discount", "tax", "fee", "rounding"}
 ADJUSTMENT_KINDS = {"discount", "tax", "fee", "rounding"}
+ADJUSTMENT_MINOR_CATEGORY = "値引き・税・手数料"
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 
@@ -98,7 +99,8 @@ Security and accuracy rules:
 - Do not treat payment, cash tendered, change, card authorization numbers, phone numbers, or registration numbers as items or totals.
 - Every item amount is its line total. Do not invent a rounding or adjustment item merely to force the sum to match.
 - sum(items.amount) must equal totalAmount.value.
-- Pick majorCategory and minorCategory only from allowedCategories. Discounts, tax, fees, and rounding use the adjustment category.
+- Pick majorCategory and minorCategory only from allowedCategories.
+- For discounts, tax, fees, and rounding, use the majorCategory whose product lines have the largest total amount on that receipt, and use its "値引き・税・手数料" minorCategory. Do not use "調整" when product lines identify a category. Use "調整" only when no product category can be determined.
 - Payer is intentionally absent and must not be inferred.
 - Evidence line numbers must refer to the numbered OCR lines. Image-only evidence may use an empty list and must add a warning.
 
@@ -191,13 +193,20 @@ def validate_result(
             errors.append(f"{path}_positive_sign")
         if kind == "rounding" and type(amount) is int and abs(amount) > 10:
             errors.append(f"{path}_rounding_range")
-        if kind in ADJUSTMENT_KINDS and major != "調整":
-            errors.append(f"{path}_adjustment_category")
         if all((isinstance(name, str), type(amount) is int, kind in KINDS,
                 isinstance(major, str), isinstance(minor, str), confidence in CONFIDENCE)):
             items.append(ValidatedLlmItem(
                 name.strip(), amount, kind, major, minor, confidence, tuple(evidence)
             ))
+
+    dominant_major = _dominant_product_major(items)
+    if dominant_major:
+        for index, item in enumerate(items):
+            if item.kind in ADJUSTMENT_KINDS and (
+                item.major_category != dominant_major
+                or item.minor_category != ADJUSTMENT_MINOR_CATEGORY
+            ):
+                errors.append(f"items[{index}]_adjustment_category")
 
     if sum(item.amount for item in items) != total_value:
         errors.append("items_total_mismatch")
@@ -283,6 +292,14 @@ def _category_pairs(values: Any) -> set[tuple[str, str]]:
         if isinstance(minors, list):
             pairs.update((value["major"], minor) for minor in minors if isinstance(minor, str))
     return pairs
+
+
+def _dominant_product_major(items: Iterable[ValidatedLlmItem]) -> str | None:
+    totals: dict[str, int] = {}
+    for item in items:
+        if item.kind == "product" and item.amount > 0 and item.major_category != "調整":
+            totals[item.major_category] = totals.get(item.major_category, 0) + item.amount
+    return max(totals, key=totals.get) if totals else None
 
 
 def _normalize_strings(value: Any) -> Any:

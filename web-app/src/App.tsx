@@ -4,7 +4,7 @@ import { auth, provider } from "./firebase";
 import {
   confirmReceipt, loadBudgets, loadCategories, loadMonth, loadReceiptItems,
   loadReviewReceipts, loadSystemAlerts, removeTransaction, saveBudget, saveCategory,
-  removeReviewReceipt, saveManualTransaction, updateReceiptDraft,
+  adjustmentMinorCategory, removeReviewReceipt, saveManualTransaction, updateReceiptDraft,
 } from "./data";
 import { summarize } from "./analytics";
 import type { Budget, Category, EntryType, Receipt, SystemAlert, Transaction } from "./types";
@@ -152,7 +152,8 @@ function ReceiptEditor({ receipt: initial, categories, onDone, onError }: { rece
   useEffect(() => { setReceipt(initial); loadReceiptItems(initial.id).then(setItems).catch((e) => onError(message(e))); }, [initial.id]);
   const difference = Number(receipt.totalAmount) - items.reduce((sum, item) => sum + Number(item.amount), 0);
   const updateItem = (id: string, patch: Partial<Transaction>) => setItems(items.map((item) => item.id === id ? { ...item, ...patch } : item));
-  const addItem = () => setItems([...items, { id: `new-${crypto.randomUUID()}`, type: "expense", amount: difference, date: receipt.purchasedAt, majorCategory: "調整", minorCategory: "その他", itemName: "調整明細", memo: "", payer: receipt.payer, shopName: receipt.shopName, source: "ocr", receiptId: receipt.id, receiptStatus: "needs_review" }]);
+  const adjustmentCategory = dominantExpenseCategory(items) ?? "調整";
+  const addItem = () => setItems([...items, { id: `new-${crypto.randomUUID()}`, type: "expense", amount: difference, date: receipt.purchasedAt, majorCategory: adjustmentCategory, minorCategory: adjustmentMinorCategory, itemName: "調整明細", memo: "", payer: receipt.payer, shopName: receipt.shopName, source: "ocr", receiptId: receipt.id, receiptStatus: "needs_review" }]);
   const remove = async () => {
     const summary = `${receipt.shopName || "店名なし"}\n${receipt.purchasedAt || "日付なし"}\n${yen.format(receipt.totalAmount)}`;
     if (!confirm(`この確認待ちレシートとすべての明細を削除しますか？\n\n${summary}\n\nこの操作は元に戻せません。`)) return;
@@ -181,6 +182,7 @@ function CategoryEditDialog({ category, onClose, onSave }: { category: Category;
 
 function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="dialog-backdrop" onMouseDown={onClose}><div className="dialog" onMouseDown={(e) => e.stopPropagation()}><div className="dialog-head"><h2>{title}</h2><button onClick={onClose}>×</button></div>{children}</div></div>; }
 function Empty({ text = "表示するデータがありません" }: { text?: string }) { return <div className="empty">{text}</div>; }
+function dominantExpenseCategory(items: Transaction[]): string | undefined { const totals = new Map<string, number>(); items.filter((item) => item.amount > 0 && item.majorCategory !== "調整").forEach((item) => totals.set(item.majorCategory, (totals.get(item.majorCategory) ?? 0) + item.amount)); return [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]; }
 function message(reason: unknown) { return reason instanceof Error ? reason.message : String(reason); }
 function pageTitle(page: Page) { return ({ dashboard: "ホーム", transactions: "取引一覧", review: "レシート確認", budgets: "予算", categories: "カテゴリ管理" })[page]; }
 function reasonLabel(reason: string) { return ({ initial_migration: "初回移行", missing_required: "必須項目不足", unexplained_difference: "差額あり", uncategorized: "未分類あり" } as Record<string, string>)[reason] ?? "要確認"; }
