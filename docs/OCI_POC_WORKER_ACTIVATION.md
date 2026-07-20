@@ -861,13 +861,40 @@ sudo -u receipt-ocr \
   /opt/receipt-ocr/.venv/bin/python --version
 
 sudo systemctl start receipt-ocr-llm-health.service
+sudo systemctl show receipt-ocr-llm-health.service \
+  --property=Result --property=ExecMainStatus
+
 sudo systemctl enable --now \
   receipt-ocr-poc.timer \
   receipt-ocr-llm.timer \
   receipt-ocr-llm-health.timer
+
+# timerを再有効化した直後は、OnUnitActiveSecの基準となる直近の
+# worker起動時刻が過去になり、NEXTが `n/a` になることがある。
+# 各workerを1回起動して次回実行時刻を再登録する。
+sudo systemctl start receipt-ocr-poc.service
+sudo systemctl start receipt-ocr-llm.service
+
+sudo systemctl is-active \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
+
+sudo systemctl list-timers --all \
+  receipt-ocr-poc.timer \
+  receipt-ocr-llm.timer \
+  receipt-ocr-llm-health.timer
+
+sudo journalctl \
+  -u receipt-ocr-poc.service \
+  -u receipt-ocr-llm.service \
+  --since "5 minutes ago" \
+  --no-pager -o cat
 ```
 
-`Python 3.11.x`、health checkの成功、3 timerの `active` を確認する。切替後に問題がある場合はtimerを
+`Python 3.11.x`、health checkの `Result=success` と `ExecMainStatus=0`、3 timerの `active` を確認する。
+`list-timers` でI/O workerとLLM workerの `NEXT` がそれぞれ約5分後・約1分後に表示され、workerログが
+`idle` または通常の処理結果となり、Python 3.9 EOL警告が出ないことを確認する。切替後に問題がある場合はtimerを
 停止し、`.venv` を `.venv-py311-failed` へ移動して `.venv-py39-backup` を `.venv` へ戻す。
 
 ## 完了条件
@@ -881,6 +908,8 @@ sudo systemctl enable --now \
 - 同じDriveファイルを再実行してもVision利用数が増えない
 - `poc_ocr_usage/_total.units` が20を超えない
 - timerが `enabled`、`active` である
+- I/O workerとLLM workerのtimerに次回実行時刻（`NEXT`）が表示される
+- Python 3.9のEOL警告が出ない
 - Codex認証が `auth_mode: chatgpt` で、APIキーが配置されていない
 - `receipt-ocr-codex` ユーザーがGoogle/Firebase鍵を読めない
 - LLM timerと週次health timerが `enabled`、`active` である
