@@ -14,7 +14,7 @@ const firestore = vi.hoisted(() => {
 vi.mock("./firebase", () => ({ db: {}, householdId: "test-household" }));
 vi.mock("firebase/firestore", () => firestore);
 
-import { removeReviewReceipt } from "./data";
+import { removeReviewReceipt, updateReceiptItem } from "./data";
 
 const snapshot = (...documents: Array<{ ref: unknown; data: () => Record<string, unknown> }>) => ({ docs: documents });
 
@@ -47,5 +47,26 @@ describe("removeReviewReceipt", () => {
     firestore.batch.commit.mockRejectedValue(new Error("permission-denied"));
 
     await expect(removeReviewReceipt("receipt-1")).rejects.toThrow("permission-denied");
+  });
+});
+
+describe("updateReceiptItem", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("marks every line and its receipt as needing review when an amount changes", async () => {
+    const firstTransaction = { id: "one", ref: { path: "transactions/one" }, data: () => ({ amount: 60 }) };
+    const secondTransaction = { id: "two", ref: { path: "transactions/two" }, data: () => ({ amount: 40 }) };
+    firestore.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ totalAmount: 100 }) });
+    firestore.getDocs.mockResolvedValue(snapshot(firstTransaction, secondTransaction));
+    firestore.batch.commit.mockResolvedValue(undefined);
+
+    await updateReceiptItem({ type: "expense", amount: 70, date: "2026-07-20", majorCategory: "食費", minorCategory: "食料品", itemName: "パン", memo: "", payer: "me", shopName: "店" }, {
+      id: "one", receiptId: "receipt-1", source: "ocr", receiptStatus: "confirmed",
+      type: "expense", amount: 60, date: "2026-07-20", majorCategory: "食費", minorCategory: "食料品", itemName: "パン", memo: "", payer: "me", shopName: "店",
+    });
+
+    expect(firestore.batch.update).toHaveBeenCalledWith(secondTransaction.ref, expect.objectContaining({ receiptStatus: "needs_review" }));
+    expect(firestore.batch.update).toHaveBeenCalledWith(expect.objectContaining({ path: "households/test-household/receipts/receipt-1" }), expect.objectContaining({ status: "needs_review", difference: -10 }));
+    expect(firestore.batch.commit).toHaveBeenCalledOnce();
   });
 });

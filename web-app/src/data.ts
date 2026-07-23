@@ -34,6 +34,19 @@ export async function loadReviewReceipts(): Promise<Receipt[]> {
   return values<Receipt>(await getDocs(query(sub("receipts"), where("status", "==", "needs_review"), orderBy("purchasedAt", "desc"))));
 }
 
+/** Loads both confirmed and review-pending receipts for the selected month. */
+export async function loadReceipts(month: string): Promise<Receipt[]> {
+  const start = `${month}-01`;
+  const [year, number] = month.split("-").map(Number);
+  const end = new Date(Date.UTC(year, number, 1)).toISOString().slice(0, 10);
+  return values<Receipt>(await getDocs(query(
+    sub("receipts"),
+    where("purchasedAt", ">=", start),
+    where("purchasedAt", "<", end),
+    orderBy("purchasedAt", "desc"),
+  )));
+}
+
 export async function loadSystemAlerts(): Promise<SystemAlert[]> {
   const alerts = values<SystemAlert>(await getDocs(sub("system_alerts")));
   return alerts.filter((alert) => !alert.resolvedAt);
@@ -71,6 +84,36 @@ export async function saveManualTransaction(value: Omit<Transaction, "id" | "sou
 
 export async function removeTransaction(id: string): Promise<void> {
   await deleteDoc(doc(sub("transactions"), id));
+}
+
+/**
+ * Updates one OCR line item. A monetary change puts the whole receipt back
+ * into review so confirmed household totals can never contain a partial receipt.
+ */
+export async function updateReceiptItem(value: Omit<Transaction, "id" | "source" | "receiptStatus">, original: Transaction): Promise<void> {
+  if (!original.receiptId) throw new Error("レシートに紐づかない取引です");
+  const receiptRef = doc(sub("receipts"), original.receiptId);
+  const receipt = await getDoc(receiptRef);
+  if (!receipt.exists()) throw new Error("レシートが見つかりません");
+
+  const payload = { ...value, amount: Number(value.amount), updatedAt: serverTimestamp() };
+  if (Number(value.amount) === Number(original.amount)) {
+    await updateDoc(doc(sub("transactions"), original.id), payload);
+    return;
+  }
+
+  const stored = await getDocs(query(sub("transactions"), where("receiptId", "==", original.receiptId)));
+  const nextSum = stored.docs.reduce((total, item) => total + Number(item.id === original.id ? value.amount : item.data().amount), 0);
+  const batch = writeBatch(db);
+  batch.update(doc(sub("transactions"), original.id), { ...payload, receiptStatus: "needs_review" });
+  stored.docs.filter((item) => item.id !== original.id).forEach((item) => batch.update(item.ref, { receiptStatus: "needs_review", updatedAt: serverTimestamp() }));
+  batch.update(receiptRef, {
+    status: "needs_review",
+    difference: Number(receipt.data().totalAmount) - nextSum,
+    reviewReason: "unexplained_difference",
+    updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export async function saveBudget(month: string, category: string, amount: number): Promise<void> {
@@ -117,7 +160,11 @@ export async function confirmReceipt(receipt: Receipt, items: Transaction[]): Pr
 
 export async function updateReceiptDraft(receipt: Receipt, items: Transaction[]): Promise<void> {
   const batch = writeBatch(db);
-  batch.update(doc(sub("receipts"), receipt.id), { shopName: receipt.shopName, purchasedAt: receipt.purchasedAt, totalAmount: Number(receipt.totalAmount), payer: receipt.payer, updatedAt: serverTimestamp() });
+  const difference = Number(receipt.totalAmount) - items.reduce((sum, item) => sum + Number(item.amount), 0);
+  batch.update(doc(sub("receipts"), receipt.id), {
+    shopName: receipt.shopName, purchasedAt: receipt.purchasedAt, totalAmount: Number(receipt.totalAmount), payer: receipt.payer,
+    status: "needs_review", difference, reviewReason: difference ? "unexplained_difference" : "reconciled", updatedAt: serverTimestamp(),
+  });
   const stored = await getDocs(query(sub("transactions"), where("receiptId", "==", receipt.id)));
   const retained = new Set(items.filter((item) => !item.id.startsWith("new-")).map((item) => item.id));
   stored.docs.filter((item) => !retained.has(item.id)).forEach((item) => batch.delete(item.ref));
